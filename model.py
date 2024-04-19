@@ -5,13 +5,19 @@ from torchvision import models
 class RegressionResNet(nn.Module):
     def __init__(self, pretrained=True, num_outputs=2):
         super(RegressionResNet, self).__init__()
-        self.model = models.resnet18(pretrained=pretrained)
-        num_ftrs = self.model.fc.in_features
-        self.model.fc = nn.Linear(num_ftrs, num_outputs)
+        resnet_model = models.resnet18(pretrained=pretrained)
+        self.backbone = nn.Sequential(*list(resnet_model.children())[:-1])
+
+        self.fc = nn.Linear(resnet_model.fc.in_features, num_outputs)
         self.global_avg_pool = nn.AdaptiveAvgPool2d((1, 1))
     
-    def forward(self, x):
-        return self.model(x)
+    def forward(self, x, ret_feat=False):
+        feat = self.backbone(x)
+        out = self.fc(feat)
+        if ret_feat:
+            return out, feat
+        else:
+            return out
 
     def get_last_layer_embeddings(self, x):
         """Extract embeddings from the last layer using a hook and global average pooling."""
