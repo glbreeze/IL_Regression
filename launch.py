@@ -22,9 +22,10 @@ import torch.nn.functional as F
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.preprocessing import MinMaxScaler
 from torch.nn.functional import mse_loss
-from dataset import NumpyDataset, transform  
+from dataset import ImageTargetDataset, transform
 from model import RegressionResNet
-from utils import get_feat_pred, Graph_Vars, compute_cosine, gram_schmidt, print_model_param_nums, set_log_path, log, print_args
+from train_utils import Graph_Vars, get_feat_pred, compute_cosine, gram_schmidt
+from utils import print_model_param_nums, set_log_path, log, print_args
         
 def main(args):
 
@@ -42,8 +43,10 @@ def main(args):
 
     pdb.set_trace()
 
-    train_dataset = NumpyDataset('/scratch/zz4330/Carla/Train/images.npy', '/scratch/zz4330/Carla/Train/targets.npy',transform=transform)
-    val_dataset = NumpyDataset('/scratch/zz4330/Carla/Val/images.npy', '/scratch/zz4330/Carla/Val/targets.npy', transform=transform)
+    train_dataset = ImageTargetDataset('/vast/zz4330/Carla_JPG/Train/images', '/vast/zz4330/Carla_JPG/Train/targets',
+                                       transform=transform)
+    val_dataset = ImageTargetDataset('/vast/zz4330/Carla_JPG/Val/images', '/vast/zz4330/Carla_JPG/Val/targets',
+                                     transform=transform)
     train_data_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=4)
     val_data_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=True, num_workers=4)
     
