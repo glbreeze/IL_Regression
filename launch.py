@@ -1,5 +1,6 @@
 import os
 import h5py
+import pdb 
 import torch
 import random
 import numpy as np
@@ -39,11 +40,12 @@ def main(args):
                )
     wandb.config.update(args)
 
+    pdb.set_trace()
 
     train_dataset = NumpyDataset('/scratch/zz4330/Carla/Train/images.npy', '/scratch/zz4330/Carla/Train/targets.npy',transform=transform)
     val_dataset = NumpyDataset('/scratch/zz4330/Carla/Val/images.npy', '/scratch/zz4330/Carla/Val/targets.npy', transform=transform)
-    train_data_loader = DataLoader(train_dataset, batch_size=128, shuffle=True, num_workers=4)
-    val_data_loader = DataLoader(val_dataset, batch_size=128, shuffle=True, num_workers=4)
+    train_data_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=4)
+    val_data_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=True, num_workers=4)
     
     model = RegressionResNet(pretrained=True, num_outputs=2).to(device)
     _ = print_model_param_nums(model=model)
@@ -144,6 +146,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Regression NC")
     parser.add_argument('--dataset', type=str, default='Carla')
     parser.add_argument('--max_epoch', type=int, default=500)
+    parser.add_argument('--batch_size', type=int, default=64)
     parser.add_argument('--num_y', type = int, default=2)
     parser.add_argument('--lr', type=float, default=1e-3)
     parser.add_argument('--lambda_H', type=float, default=1e-5)
@@ -158,11 +161,11 @@ if __name__ == '__main__':
 
     parser.add_argument('--exp_name', type=str, default='exp')
     args = parser.parse_args()
-    args.save_dir = os.path.join("./Result/", args.exp_name)
+    args.save_dir = os.path.join("./result/", args.exp_name)
     if not os.path.exists(args.save_dir):
         os.makedirs(args.save_dir)
-    set_log_path(args.output_dir)
-    log('save log to path {}'.format(args.output_dir))
+    set_log_path(args.save_dir)
+    log('save log to path {}'.format(args.save_dir))
     log(print_args(args))
 
     main(args)
