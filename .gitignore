@@ -2,3 +2,4 @@ IL_Regression
 result
 .idea
 tp.py
+__pycache__

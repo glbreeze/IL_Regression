@@ -1,5 +1,20 @@
 import torch
 import os
+import torch.optim as optim
+
+
+def get_scheduler(args, optimizer):
+    """
+    cosine will change learning rate every iteration, others change learning rate every epoch
+    :param batches: the number of iterations in each epochs
+    :return: scheduler
+    """
+
+    SCHEDULERS = {
+        'multi_step': optim.lr_scheduler.MultiStepLR(optimizer, milestones=[100, 200], gamma=0.1),
+        'cosine': optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.max_epoch),
+    }
+    return SCHEDULERS[args.scheduler]
 
 
 def get_feat_pred(model, loader):
@@ -24,7 +39,7 @@ def get_feat_pred(model, loader):
     return all_feats, all_preds, all_labels
 
 
-def compute_cosine(W):
+def compute_cosine_norm(W):
     # Compute cosine similarity between row vectors
 
     dot_product = torch.matmul(W, W.transpose(1, 0))  # Shape: (3, 3)
@@ -33,9 +48,9 @@ def compute_cosine(W):
     norm = torch.sqrt(torch.sum(W ** 2, dim=-1, keepdim=True))  # Shape: (3, 1)
 
     # Compute cosine similarity
-    cosine = dot_product / (norm * norm.transpose(1, 0))
+    cosine = dot_product / (norm * norm.transpose(1, 0))  # [3, 3]
 
-    return cosine
+    return cosine, norm
 
 
 def gram_schmidt(W):
@@ -67,6 +82,27 @@ class Graph_Vars:
         self.epoch.append(epoch)
         if lr:
             self.lr.append(lr)
+        for key in nc_dt:
+            try:
+                self.__getattribute__(key).append(nc_dt[key])
+            except:
+                print('{} is not attribute of Graph var'.format(key))
+
+
+class Train_Vars:
+    def __init__(self):
+        self.epoch = []
+        self.lr = []
+
+        self.train_mse = []
+        self.train_proj_error = []
+        self.cos_w12 = []
+        self.norm_w1 = []
+        self.norm_w2 = []
+        self.w_outer_d = []
+
+    def load_dt(self, nc_dt, epoch):
+        self.epoch.append(epoch)
         for key in nc_dt:
             try:
                 self.__getattribute__(key).append(nc_dt[key])
