@@ -4,11 +4,13 @@ import os
 
 def get_feat_pred(model, loader):
     model.eval()
-    all_feats, all_preds, all_labels = [], [], [], []
+    all_feats, all_preds, all_labels = [], [], []
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     with torch.no_grad():
-        for i, (input, target) in enumerate(loader):
+        for i, batch in enumerate(loader):
+            input = batch['image'].to(device)
+            target = batch['target'].to(device)
             input, target = input.to(device), target.to(device)
             pred, feat = model(input, ret_feat=True)
 
@@ -50,6 +52,8 @@ def gram_schmidt(W):
 class Graph_Vars:
     def __init__(self):
         self.epoch = []
+        self.lr = []
+        
         self.train_mse = []
         self.val_mse = []
 

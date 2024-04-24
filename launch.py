@@ -22,7 +22,7 @@ import torch.nn.functional as F
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.preprocessing import MinMaxScaler
 from torch.nn.functional import mse_loss
-from dataset import ImageTargetDataset, transform
+from dataset import ImageTargetDataset, H5Dataset, transform
 from model import RegressionResNet
 from train_utils import Graph_Vars, get_feat_pred, compute_cosine, gram_schmidt
 from utils import print_model_param_nums, set_log_path, log, print_args
@@ -42,11 +42,10 @@ def main(args):
     wandb.config.update(args)
 
     pdb.set_trace()
-
-    train_dataset = ImageTargetDataset('/vast/zz4330/Carla_JPG/Train/images', '/vast/zz4330/Carla_JPG/Train/targets',
-                                       transform=transform)
-    val_dataset = ImageTargetDataset('/vast/zz4330/Carla_JPG/Val/images', '/vast/zz4330/Carla_JPG/Val/targets',
-                                     transform=transform)
+    # train_dataset = ImageTargetDataset('/vast/zz4330/Carla_JPG/Train/images', '/vast/zz4330/Carla_JPG/Train/targets', transform=transform)
+    # val_dataset = ImageTargetDataset('/vast/zz4330/Carla_JPG/Val/images', '/vast/zz4330/Carla_JPG/Val/targets', transform=transform)
+    train_dataset = H5Dataset('/vast/zz4330/Carla_h5/SeqTrain', transform=transform)
+    val_dataset = H5Dataset('/vast/zz4330/Carla_h5/SeqVal', transform=transform)
     train_data_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=4)
     val_data_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=True, num_workers=4)
     
@@ -65,25 +64,21 @@ def main(args):
         else:
             print("=> no checkpoint found at '{}'".format(args.resume))
 
-    model = model.to(device)
-    for name, param in model.named_parameters():
-        print(f"{name}: {param.size()}")
     criterion = nn.MSELoss()
-   
     if args.ufm:
         optimizer = torch.optim.SGD(model.parameters(), momentum=0.9, lr=args.lr, weight_decay=0)
     else:
         optimizer = torch.optim.SGD(model.parameters(), momentum=0.9, lr=args.lr, weight_decay=args.wd)
 
     # ================== Training ==================
-    nc_tracker = Graph_Vars
+    nc_tracker = Graph_Vars()
     wandb.watch(model, criterion, log="all", log_freq=10)
     for epoch in range(args.start_epoch, args.max_epoch):
         model.train()
         running_loss = 0.0
         for batch_idx, batch in enumerate(train_data_loader):
             images = batch['image'].to(device)
-            targets = batch['targets'].to(device)
+            targets = batch['target'].to(device)
             optimizer.zero_grad()
             outputs, feats = model(images, ret_feat=True)
 
@@ -129,8 +124,7 @@ def main(args):
             'train_proj_error': projection_error_train,
             'val_proj_error': projection_error_val
         }
-
-        nc_tracker.load_dt(nc_dt)
+        nc_tracker.load_dt(nc_dt, epoch=epoch)
 
         wandb.log({'mse/train_mse': train_loss,
                    'mse/val_mse': val_loss,
@@ -138,8 +132,11 @@ def main(args):
                    'nc/train_proj_error': projection_error_train,
                    'nc/val_proj_error': projection_error_val},
                   step=epoch)
+        log("Epoch [{}/{}], Train_loss: {:.4f}, Val_loss: {:.4f}, Train_proj_error: {:.2f}, Val_proj_error: {:.2f}".format(
+            epoch, args.max_epoch, train_loss, val_loss, nc_dt['train_proj_error'], nc_dt['val_proj_error']
+        ))
 
-        if epoch // args.save_freq == 0:
+        if epoch % args.save_freq == 0:
             ckpt_path = os.path.join(args.save_dir, 'ep{}_ckpt.pth'.format(epoch))
             ckpt = {'epoch': epoch, 'state_dict': model.state_dict(), 'lr': optimizer.param_groups[0]['lr'] }
             torch.save(ckpt, ckpt_path)

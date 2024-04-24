@@ -13,6 +13,7 @@ class RegressionResNet(nn.Module):
     
     def forward(self, x, ret_feat=False):
         feat = self.backbone(x)
+        feat = torch.flatten(feat, 1)
         out = self.fc(feat)
         if ret_feat:
             return out, feat

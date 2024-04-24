@@ -1,4 +1,5 @@
 import os
+import h5py
 import numpy as np
 from PIL import Image
 import torch
@@ -39,7 +40,36 @@ class ImageTargetDataset(Dataset):
         if self.transform:
             image = self.transform(image)
 
-        return {'image': image, 'target': torch.tensor(target[0], dtype=torch.float)}
+        return {'image': image, 'target': torch.tensor(target[[0, 10]], dtype=torch.float)}
+    
+
+class H5Dataset(Dataset):
+    def __init__(self, folder_path, transform=None):
+        self.folder_path = folder_path
+        self.file_paths = [os.path.join(folder_path, file) for file in os.listdir(folder_path) if file.endswith('.h5')]
+
+        self.data = []
+        self.labels = []
+
+        for file_path in self.file_paths:
+            with h5py.File(file_path, 'r') as file:
+                images_dataset = file['rgb']   
+                labels_dataset = file['targets']   
+                for i in range(len(images_dataset)):
+                    self.data.append(images_dataset[i])
+                    self.labels.append(labels_dataset[i])
+        
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        image = self.data[idx]
+        label = self.labels[idx]
+        if self.transform:
+            image = self.transform(image)
+        return torch.tensor(image), torch.tensor(label)
 
 
 transform = transforms.Compose([
