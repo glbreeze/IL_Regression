@@ -3,12 +3,12 @@ import torch.nn as nn
 from torchvision import models
 
 class RegressionResNet(nn.Module):
-    def __init__(self, pretrained=True, num_outputs=2):
+    def __init__(self, pretrained=True, num_outputs=2, bias=True):
         super(RegressionResNet, self).__init__()
         resnet_model = models.resnet18(pretrained=pretrained)
         self.backbone = nn.Sequential(*list(resnet_model.children())[:-1])
 
-        self.fc = nn.Linear(resnet_model.fc.in_features, num_outputs)
+        self.fc = nn.Linear(resnet_model.fc.in_features, num_outputs, bias=bias)
         self.global_avg_pool = nn.AdaptiveAvgPool2d((1, 1))
     
     def forward(self, x, ret_feat=False):

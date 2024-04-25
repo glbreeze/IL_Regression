@@ -7,7 +7,7 @@
 #SBATCH --mem=80GB
 #SBATCH --time=48:00:00
 #SBATCH --gres=gpu
-#SBATCH --partition=a100_1,a100_2,v100,rtx8000
+#SBATCH --partition=a100_1,a100_2,v100
 
 # job info
 # LOSS=$1
@@ -22,7 +22,7 @@ singularity exec --nv \
 --overlay /scratch/lg154/sseg/dataset/tiny-imagenet-200.sqf:ro \
 ${sif_path} /bin/bash -c "
 source /ext3/env.sh
-python launch.py --exp_name baseline
+python train.py --batch_size 256 --ufm --exp_name ufm_b256_ob
  " 
 
 

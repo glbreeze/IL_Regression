@@ -1,5 +1,6 @@
 import os
 import pdb
+import pickle
 import torch
 import random
 import numpy as np
@@ -75,6 +76,11 @@ def main(args):
     Sigma_sqrt = eigenvectors.dot(np.diag(sqrt_eigenvalues)).dot(np.linalg.inv(eigenvectors))
 
     W_outer = args.lambda_H * (Sigma_sqrt/np.sqrt(args.lambda_H*args.lambda_W) - np.eye(args.num_y))
+    
+    filename = os.path.join(args.save_dir, 'theory.pkl')
+    with open(filename, 'wb') as f:
+        pickle.dump({'target':all_labels.cpu().numpy(), 'W_outer':W_outer, 'lambda_H':args.lambda_H, 'lambda_W':args.lambda_W}, f)
+        log('--store theoretical result to {}'.format(filename))
 
     # ================== Training ==================
     criterion = nn.MSELoss()
@@ -110,7 +116,8 @@ def main(args):
         cosine_W, norm_W = compute_cosine_norm(W)
 
         W_outer_pred = torch.matmul(W, W.T)
-        W_outer_d = torch.norm( (W_outer-W_outer_pred), p='fro')
+        W_outer_d = W_outer - W_outer_pred.cpu().numpy()
+        W_outer_d = np.sum(W_outer_d**2) 
 
         # === compute projection error
         U = gram_schmidt(W)
@@ -153,6 +160,11 @@ def main(args):
             }, ckpt_path)
 
             log('--save model to {}'.format(ckpt_path))
+        
+        if epoch % (args.save_freq*10) == 0:
+            filename = os.path.join(args.save_dir, 'train_nc{}.pkl'.format(epoch))
+            with open(filename, 'wb') as f:
+                pickle.dump(nc_tracker, f)
 
 
 if __name__ == '__main__':
@@ -162,17 +174,18 @@ if __name__ == '__main__':
     parser.add_argument('--batch_size', type=int, default=64)
     parser.add_argument('--num_y', type=int, default=2)
     parser.add_argument('--lr', type=float, default=1e-3)
-    parser.add_argument('--lambda_H', type=float, default=1e-5)
-    parser.add_argument('--lambda_W', type=float, default=5e-2)
+    parser.add_argument('--lambda_H', type=float, default=1e-3)
+    parser.add_argument('--lambda_W', type=float, default=1e-3)
     parser.add_argument('--wd', type=float, default=5e-4)
     parser.add_argument('--scheduler', type=str, default='multi_step')
 
     parser.add_argument('--ufm', default=False, action='store_true')
+    parser.add_argument('--bias', default=False, action='store_true')
 
     parser.add_argument('--resume', type=str, default=None)
     parser.add_argument('--start_epoch', default=0, type=int, metavar='N',
                         help='manual epoch number (useful on restarts)')
-    parser.add_argument('--save_freq', default=10, type=int)
+    parser.add_argument('--save_freq', default=5, type=int)
 
     parser.add_argument('--exp_name', type=str, default='exp')
     args = parser.parse_args()
