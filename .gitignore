@@ -3,3 +3,4 @@ result
 .idea
 tp.py
 __pycache__
+*.out

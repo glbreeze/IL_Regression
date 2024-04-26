@@ -35,8 +35,10 @@ def main(args):
 
     # train_dataset = ImageTargetDataset('/vast/zz4330/Carla_JPG/Train/images', '/vast/zz4330/Carla_JPG/Train/targets', transform=transform)
     # val_dataset = ImageTargetDataset('/vast/zz4330/Carla_JPG/Val/images', '/vast/zz4330/Carla_JPG/Val/targets', transform=transform)
-    train_dataset = NumpyDataset('/scratch/zz4330/Carla/Train/images.npy', '/scratch/zz4330/Carla/Train/targets.npy', transform=transform)
-    val_dataset = NumpyDataset('/scratch/zz4330/Carla/Val/images.npy', '/scratch/zz4330/Carla/Val/targets.npy', transform=transform)
+    train_dataset = NumpyDataset('/scratch/zz4330/Carla/Train/images.npy', '/scratch/zz4330/Carla/Train/targets.npy',
+                                 transform=transform)
+    val_dataset = NumpyDataset('/scratch/zz4330/Carla/Val/images.npy', '/scratch/zz4330/Carla/Val/targets.npy',
+                               transform=transform)
     train_data_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=2)
     val_data_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=2)
 
@@ -69,21 +71,23 @@ def main(args):
         for i, batch in enumerate(train_data_loader):
             target = batch['target'].to(device)
             all_labels.append(target)
-        all_labels = torch.cat(all_labels)   # [N, 2]
-    Sigma = torch.matmul(all_labels.T, all_labels)/len(all_labels)
+        all_labels = torch.cat(all_labels)  # [N, 2]
+    Sigma = torch.matmul(all_labels.T, all_labels) / len(all_labels)
     Sigma = Sigma.cpu().numpy()
 
     eigenvalues, eigenvectors = np.linalg.eig(Sigma)
     sqrt_eigenvalues = np.sqrt(eigenvalues)
     Sigma_sqrt = eigenvectors.dot(np.diag(sqrt_eigenvalues)).dot(np.linalg.inv(eigenvectors))
 
-    W_outer = args.lambda_H * (Sigma_sqrt/np.sqrt(args.lambda_H*args.lambda_W) - np.eye(args.num_y))
-    
+    W_outer = args.lambda_H * (Sigma_sqrt / np.sqrt(args.lambda_H * args.lambda_W) - np.eye(args.num_y))
+
     filename = os.path.join(args.save_dir, 'theory.pkl')
     with open(filename, 'wb') as f:
-        pickle.dump({'target':all_labels.cpu().numpy(), 'W_outer':W_outer, 'lambda_H':args.lambda_H, 'lambda_W':args.lambda_W}, f)
+        pickle.dump({'target': all_labels.cpu().numpy(), 'W_outer': W_outer, 'lambda_H': args.lambda_H,
+                     'lambda_W': args.lambda_W}, f)
         log('--store theoretical result to {}'.format(filename))
-        log('====> Theoretical ww00: {:.4f}, ww01: {:.4f}, ww11: {:.4f}'.format(W_outer[0, 0], W_outer[0, 1], W_outer[1, 1]))
+        log('====> Theoretical ww00: {:.4f}, ww01: {:.4f}, ww11: {:.4f}'.format(W_outer[0, 0], W_outer[0, 1],
+                                                                                W_outer[1, 1]))
 
     # ================== Training ==================
     criterion = nn.MSELoss()
@@ -119,7 +123,7 @@ def main(args):
 
         W_outer_pred = torch.matmul(W, W.T)
         W_outer_d = W_outer - W_outer_pred.cpu().numpy()
-        W_outer_d = np.sum(W_outer_d**2)
+        W_outer_d = np.sum(W_outer_d ** 2)
 
         # === compute projection error
         U = gram_schmidt(W)
@@ -147,9 +151,11 @@ def main(args):
              },
             step=epoch)
 
-        log('Epoch {}/{}, runnning train mse: {:.4f}, ww00: {:.4f}, ww01: {:.4f}, ww11: {:.4f}, W_outer_d: {:.4f}'.format(
-            epoch, args.max_epoch, running_train_loss, W_outer_pred[0, 0].item(), W_outer_pred[0, 1].item(), W_outer_pred[1, 1].item(), W_outer_d
-        ))
+        log(
+            'Epoch {}/{}, runnning train mse: {:.4f}, ww00: {:.4f}, ww01: {:.4f}, ww11: {:.4f}, W_outer_d: {:.4f}'.format(
+                epoch, args.max_epoch, running_train_loss, W_outer_pred[0, 0].item(), W_outer_pred[0, 1].item(),
+                W_outer_pred[1, 1].item(), W_outer_d
+            ))
 
         if epoch % args.save_freq == 0:
             ckpt_path = os.path.join(args.save_dir, 'ep{}_ckpt.pth'.format(epoch))
@@ -162,8 +168,8 @@ def main(args):
             }, ckpt_path)
 
             log('--save model to {}'.format(ckpt_path))
-        
-        if epoch % (args.save_freq*10) == 0:
+
+        if epoch % (args.save_freq * 10) == 0:
             filename = os.path.join(args.save_dir, 'train_nc{}.pkl'.format(epoch))
             with open(filename, 'wb') as f:
                 pickle.dump(nc_tracker, f)
