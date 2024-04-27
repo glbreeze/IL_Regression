@@ -9,7 +9,7 @@ from torchvision import transforms
 
 class ImageTargetDataset(Dataset):
 
-    def __init__(self, images_dir, targets_dir, transform=None):
+    def __init__(self, images_dir, targets_dir, transform=None, dim=2):
         """
         Args:
             images_dir (str): Path to the directory containing image files.
@@ -19,6 +19,7 @@ class ImageTargetDataset(Dataset):
         self.images_dir = images_dir
         self.targets_dir = targets_dir
         self.transform = transform
+        self.dim = dim
 
         self.image_filenames = [f for f in sorted(os.listdir(images_dir)) if f.endswith('.jpeg')]
         self.target_filenames = [f for f in sorted(os.listdir(targets_dir)) if f.endswith('.npy')]
@@ -40,7 +41,10 @@ class ImageTargetDataset(Dataset):
         if self.transform:
             image = self.transform(image)
 
-        return {'image': image, 'target': torch.tensor(target[[0, 10]], dtype=torch.float)}
+        if self.dim==1:
+            return {'image': image, 'target': torch.tensor(target[0], dtype=torch.float)}
+        elif self.dim==2:
+            return {'image': image, 'target': torch.tensor(target[[0, 10]], dtype=torch.float)}
 
 
 class NumpyDataset(Dataset):

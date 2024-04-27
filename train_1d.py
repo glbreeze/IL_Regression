@@ -33,19 +33,21 @@ def main(args):
                )
     wandb.config.update(args)
 
-    # train_dataset = ImageTargetDataset('/vast/zz4330/Carla_JPG/Train/images', '/vast/zz4330/Carla_JPG/Train/targets', transform=transform)
-    # val_dataset = ImageTargetDataset('/vast/zz4330/Carla_JPG/Val/images', '/vast/zz4330/Carla_JPG/Val/targets', transform=transform)
-    train_dataset = NumpyDataset('/scratch/zz4330/Carla/Train/images.npy', '/scratch/zz4330/Carla/Train/targets.npy',
-                                 transform=transform)
-    val_dataset = NumpyDataset('/scratch/zz4330/Carla/Val/images.npy', '/scratch/zz4330/Carla/Val/targets.npy',
-                               transform=transform)
+    train_dataset = ImageTargetDataset('/vast/zz4330/Carla_JPG/Train/images', '/vast/zz4330/Carla_JPG/Train/targets', transform=transform, dim=args.num_y)
+    val_dataset = ImageTargetDataset('/vast/zz4330/Carla_JPG/Val/images', '/vast/zz4330/Carla_JPG/Val/targets', transform=transform, dim=args.num_y)
+    # train_dataset = NumpyDataset('/scratch/zz4330/Carla/Train/images.npy', '/scratch/zz4330/Carla/Train/targets.npy', transform=transform)
+    # val_dataset = NumpyDataset('/scratch/zz4330/Carla/Val/images.npy', '/scratch/zz4330/Carla/Val/targets.npy', transform=transform)
     train_data_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=2)
     val_data_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=2)
 
-    model = RegressionResNet(pretrained=True, num_outputs=2).to(device)
+    model = RegressionResNet(pretrained=True, num_outputs=args.num_y, bias=args.bias).to(device)
     _ = print_model_param_nums(model=model)
     if torch.cuda.is_available():
         model = model.cuda()
+    if model.fc.bias is not None:
+        log("classification layer has bias terms.")
+    else:
+        log("classification layer DO NOT have bias terms.")
 
     if args.ufm:
         optimizer = torch.optim.SGD(model.parameters(), momentum=0.9, lr=args.lr, weight_decay=0)
@@ -83,15 +85,13 @@ def main(args):
 
     filename = os.path.join(args.save_dir, 'theory.pkl')
     with open(filename, 'wb') as f:
-        pickle.dump({'target': all_labels.cpu().numpy(), 'W_outer': W_outer, 'lambda_H': args.lambda_H,
-                     'lambda_W': args.lambda_W}, f)
+        pickle.dump({'target': all_labels.cpu().numpy(), 'W_outer': W_outer, 'lambda_H': args.lambda_H, 'lambda_W': args.lambda_W}, f)
         log('--store theoretical result to {}'.format(filename))
-        log('====> Theoretical ww00: {:.4f}, ww01: {:.4f}, ww11: {:.4f}'.format(W_outer[0, 0], W_outer[0, 1],
-                                                                                W_outer[1, 1]))
+        log('====> Theoretical ww00: {:.4f}'.format(W_outer[0, 0]))
 
     # ================== Training ==================
     criterion = nn.MSELoss()
-    nc_tracker = Train_Vars()
+    nc_tracker = Train_Vars(dim=args.num_y)
     wandb.watch(model, criterion, log="all", log_freq=10)
     for epoch in range(args.start_epoch, args.max_epoch):
         model.train()
@@ -133,10 +133,8 @@ def main(args):
 
         nc_dt = {'lr': optimizer.param_groups[0]['lr'],
                  'train_mse': running_train_loss,
-                 'project_error': projection_error_train,
+                 'train_proj_error': projection_error_train,
                  'ww00': W_outer_pred[0, 0].item(),
-                 'ww01': W_outer_pred[0, 1].item(),
-                 'ww11': W_outer_pred[1, 1].item(),
                  'W_outer_d': W_outer_d}
         nc_tracker.load_dt(nc_dt, epoch=epoch)
 
@@ -145,16 +143,13 @@ def main(args):
              'train/train_mse': running_train_loss,
              'train/project_error': projection_error_train,
              'W/ww00': W_outer_pred[0, 0].item(),
-             'W/ww01': W_outer_pred[0, 1].item(),
-             'W/ww11': W_outer_pred[1, 1].item(),
              'W/W_outer_d': W_outer_d
              },
             step=epoch)
 
         log(
-            'Epoch {}/{}, runnning train mse: {:.4f}, ww00: {:.4f}, ww01: {:.4f}, ww11: {:.4f}, W_outer_d: {:.4f}'.format(
-                epoch, args.max_epoch, running_train_loss, W_outer_pred[0, 0].item(), W_outer_pred[0, 1].item(),
-                W_outer_pred[1, 1].item(), W_outer_d
+            'Epoch {}/{}, runnning train mse: {:.4f}, ww00: {:.4f}, W_outer_d: {:.4f}'.format(
+                epoch, args.max_epoch, running_train_loss, W_outer_pred[0, 0].item(), W_outer_d
             ))
 
         if epoch % args.save_freq == 0:

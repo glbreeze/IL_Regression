@@ -90,16 +90,17 @@ class Graph_Vars:
 
 
 class Train_Vars:
-    def __init__(self):
+    def __init__(self, dim=2):
         self.epoch = []
         self.lr = []
 
         self.train_mse = []
         self.train_proj_error = []
-        self.cos_w12 = []
-        self.norm_w1 = []
-        self.norm_w2 = []
         self.w_outer_d = []
+        self.w00 = []
+        if dim==2:
+            self.w01 = []
+            self.w11 = []
 
     def load_dt(self, nc_dt, epoch):
         self.epoch.append(epoch)
