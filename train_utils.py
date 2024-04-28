@@ -97,10 +97,10 @@ class Train_Vars:
         self.train_mse = []
         self.train_proj_error = []
         self.w_outer_d = []
-        self.w00 = []
+        self.ww00 = []
         if dim==2:
-            self.w01 = []
-            self.w11 = []
+            self.ww01 = []
+            self.ww11 = []
 
     def load_dt(self, nc_dt, epoch):
         self.epoch.append(epoch)

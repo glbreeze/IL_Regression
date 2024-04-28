@@ -20,6 +20,34 @@ from train_utils import Graph_Vars, get_feat_pred, compute_cosine_norm, gram_sch
 from utils import print_model_param_nums, set_log_path, log, print_args
 
 
+def train_one_epoch(model, data_loader, optimizer, criterion, args):
+    model.train()
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    running_loss = 0.0
+    all_feats = []
+    for batch_idx, batch in enumerate(data_loader):
+        images = batch['image'].to(device)
+        targets = batch['target'].to(device)
+        optimizer.zero_grad()
+        outputs, feats = model(images, ret_feat=True)
+        all_feats.append(feats.data)
+
+        loss = criterion(outputs, targets)
+        if args.ufm:
+            l2reg_H = torch.norm(feats, 2) * args.lambda_H / args.batch_size
+            l2reg_W = torch.norm(model.fc.weight, 2) * args.lambda_W
+            loss = loss + l2reg_H + l2reg_W
+
+        loss.backward()
+        optimizer.step()
+
+        running_loss += loss.item()
+        running_train_loss = running_loss / len(data_loader)
+
+    all_feats = torch.cat(all_feats)
+    return all_feats, running_train_loss
+
+
 def main(args):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -94,29 +122,9 @@ def main(args):
     nc_tracker = Train_Vars(dim=args.num_y)
     wandb.watch(model, criterion, log="all", log_freq=10)
     for epoch in range(args.start_epoch, args.max_epoch):
-        model.train()
-        running_loss = 0.0
-        all_feats = []
-        for batch_idx, batch in enumerate(train_data_loader):
-            images = batch['image'].to(device)
-            targets = batch['target'].to(device)
-            optimizer.zero_grad()
-            outputs, feats = model(images, ret_feat=True)
-            all_feats.append(feats.data)
 
-            loss = criterion(outputs, targets)
-            if args.ufm:
-                l2reg_H = torch.norm(feats, 2) * args.lambda_H / args.batch_size
-                l2reg_W = torch.norm(model.fc.weight, 2) * args.lambda_W
-                loss = loss + l2reg_H + l2reg_W
-
-            loss.backward()
-            optimizer.step()
-
-            running_loss += loss.item()
-            running_train_loss = running_loss / len(train_data_loader)
-
-        all_feats = torch.cat(all_feats)
+        all_feats, running_train_loss = train_one_epoch(model, train_data_loader, optimizer, criterion, args=args)
+        scheduler.step()
 
         # === cosine between Wi's
         W = model.fc.weight.data  # [2, 512]
@@ -159,7 +167,6 @@ def main(args):
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
                 'scheduler_state_dict': scheduler.state_dict(),
-                'loss': loss,
             }, ckpt_path)
 
             log('--save model to {}'.format(ckpt_path))
