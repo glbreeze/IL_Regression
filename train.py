@@ -26,16 +26,16 @@ def train_one_epoch(model, data_loader, optimizer, criterion, args):
     running_loss = 0.0
     all_feats = []
     for batch_idx, batch in enumerate(data_loader):
-        images = batch['image'].to(device)
-        targets = batch['target'].to(device)
+        images = batch['image'].to(device, non_blocking=True)
+        targets = batch['target'].to(device, non_blocking=True)
         optimizer.zero_grad()
         outputs, feats = model(images, ret_feat=True)
         all_feats.append(feats.data)
 
         loss = criterion(outputs, targets)
         if args.ufm:
-            l2reg_H = torch.norm(feats, 2) * args.lambda_H / args.batch_size
-            l2reg_W = torch.norm(model.fc.weight, 2) * args.lambda_W
+            l2reg_H = torch.sum(feats**2) * args.lambda_H / args.batch_size
+            l2reg_W = torch.sum(model.fc.weight ** 2) * args.lambda_W
             loss = loss + l2reg_H + l2reg_W
 
         loss.backward()
@@ -65,8 +65,8 @@ def main(args):
     val_dataset = ImageTargetDataset('/vast/zz4330/Carla_JPG/Val/images', '/vast/zz4330/Carla_JPG/Val/targets', transform=transform, dim=args.num_y)
     # train_dataset = NumpyDataset('/scratch/zz4330/Carla/Train/images.npy', '/scratch/zz4330/Carla/Train/targets.npy', transform=transform)
     # val_dataset = NumpyDataset('/scratch/zz4330/Carla/Val/images.npy', '/scratch/zz4330/Carla/Val/targets.npy', transform=transform)
-    train_data_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=2)
-    val_data_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=2)
+    train_data_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=4, pin_memory=True, persistent_workers=True)
+    val_data_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=4, pin_memory=True, persistent_workers=True)
 
     model = RegressionResNet(pretrained=True, num_outputs=args.num_y, bias=args.bias).to(device)
     _ = print_model_param_nums(model=model)

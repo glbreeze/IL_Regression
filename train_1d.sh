@@ -22,7 +22,7 @@ singularity exec --nv \
 --overlay /scratch/lg154/sseg/dataset/tiny-imagenet-200.sqf:ro \
 ${sif_path} /bin/bash -c "
 source /ext3/env.sh
-python train.py --batch_size 512 --ufm --exp_name ufm_b512_ob_debug
+python train_1d.py --batch_size 512 --ufm --exp_name ufm1D_b512_ob_debug
  " 
 
 
