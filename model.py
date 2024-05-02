@@ -6,8 +6,11 @@ class RegressionResNet(nn.Module):
     def __init__(self, pretrained=True, num_outputs=2, args=None):
         super(RegressionResNet, self).__init__()
         self.args = args 
-        
-        resnet_model = models.resnet18(pretrained=pretrained)
+
+        if args.arch == 'resnet18' or args.arch == 'res18':
+            resnet_model = models.resnet18(pretrained=pretrained)
+        elif args.arch == 'resnet50' or args.arch == 'res50':
+            resnet_model = models.resnet50(pretrained=pretrained)
         self.backbone = nn.Sequential(*list(resnet_model.children())[:-2])
         
         if self.args.feat == 'b': 

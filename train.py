@@ -64,7 +64,6 @@ def main(args):
 
     train_dataset = SubDataset('/vast/lg154/Carla_JPG/Train/train_list.txt',
                                '/vast/lg154/Carla_JPG/Train/sub_targets.pkl', transform=transform, dim=args.num_y)
-    # val_dataset = ImageTargetDataset('/vast/zz4330/Carla_JPG/Val/images', '/vast/zz4330/Carla_JPG/Val/targets', transform=transform, dim=args.num_y)
     
     # train_dataset = ImageTargetDataset('/vast/lg154/Carla_JPG/Train/images', '/vast/lg154/Carla_JPG/Train/targets', transform=transform, dim=args.num_y)
     # val_dataset = ImageTargetDataset('/vast/zz4330/Carla_JPG/Val/images', '/vast/zz4330/Carla_JPG/Val/targets', transform=transform, dim=args.num_y)
@@ -200,6 +199,8 @@ def main(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Regression NC")
     parser.add_argument('--dataset', type=str, default='Carla')
+    parser.add_argument('--arch', type=str, default='resnet18')
+
     parser.add_argument('--max_epoch', type=int, default=1000)
     parser.add_argument('--batch_size', type=int, default=64)
     parser.add_argument('--num_y', type=int, default=2)
