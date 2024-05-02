@@ -1,5 +1,6 @@
 import os
 import h5py
+import pickle 
 import numpy as np
 from PIL import Image
 import torch
@@ -37,6 +38,47 @@ class ImageTargetDataset(Dataset):
 
         image = Image.open(img_path).convert('RGB')
         target = np.load(target_path)
+
+        if self.transform:
+            image = self.transform(image)
+
+        if self.dim==1:
+            return {'image': image, 'target': torch.tensor(target[0], dtype=torch.float)}
+        elif self.dim==2:
+            return {'image': image, 'target': torch.tensor(target[[0, 10]], dtype=torch.float)}
+
+
+class SubDataset(Dataset):
+
+    def __init__(self, train_list, target_file, transform=None, dim=2):
+        """
+        Args:
+            images_dir (str): Path to the directory containing image files.
+            targets_dir (str): Path to the directory containing target files.
+            transform (callable, optional): Optional transform to be applied on a sample.
+        """
+        folder = os.path.dirname(train_list)
+        self.img_path = []
+
+        with open(train_list, 'r') as f:
+            for line in f:
+                self.img_path.append(os.path.join(folder, 'sub_images', line.strip()))
+        
+        with open(target_file, 'rb') as file:
+            self.targets = pickle.load(file)
+                
+        self.transform = transform
+        self.dim = dim
+
+    def __len__(self):
+        return len(self.img_path)
+
+    def __getitem__(self, idx):
+
+        img_path = self.img_path[idx]
+        image = Image.open(img_path).convert('RGB')
+    
+        target = self.targets[idx]
 
         if self.transform:
             image = self.transform(image)

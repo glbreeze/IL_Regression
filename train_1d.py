@@ -14,7 +14,7 @@ import logging
 import datetime
 import argparse
 from torch.nn.functional import mse_loss
-from dataset import ImageTargetDataset, NumpyDataset, transform
+from dataset import ImageTargetDataset, SubDataset, transform
 from model import RegressionResNet
 from train_utils import Graph_Vars, get_feat_pred, compute_cosine_norm, gram_schmidt, get_scheduler, Train_Vars
 from utils import print_model_param_nums, set_log_path, log, print_args
@@ -61,14 +61,17 @@ def main(args):
                )
     wandb.config.update(args)
 
-    train_dataset = ImageTargetDataset('/vast/zz4330/Carla_JPG/Train/images', '/vast/zz4330/Carla_JPG/Train/targets', transform=transform, dim=args.num_y)
-    val_dataset = ImageTargetDataset('/vast/zz4330/Carla_JPG/Val/images', '/vast/zz4330/Carla_JPG/Val/targets', transform=transform, dim=args.num_y)
+    train_dataset = SubDataset('/vast/lg154/Carla_JPG/Train/train_list.txt',
+                               '/vast/lg154/Carla_JPG/Train/sub_targets.pkl', transform=transform, dim=args.num_y)
+    # val_dataset = ImageTargetDataset('/vast/zz4330/Carla_JPG/Val/images', '/vast/zz4330/Carla_JPG/Val/targets', transform=transform, dim=args.num_y)
+    
+    # train_dataset = ImageTargetDataset('/vast/zz4330/Carla_JPG/Train/images', '/vast/zz4330/Carla_JPG/Train/targets', transform=transform, dim=args.num_y)
     # train_dataset = NumpyDataset('/scratch/zz4330/Carla/Train/images.npy', '/scratch/zz4330/Carla/Train/targets.npy', transform=transform)
     # val_dataset = NumpyDataset('/scratch/zz4330/Carla/Val/images.npy', '/scratch/zz4330/Carla/Val/targets.npy', transform=transform)
     train_data_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=4, pin_memory=True, persistent_workers=True)
-    val_data_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=4, pin_memory=True, persistent_workers=True)
+    # val_data_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=4, pin_memory=True, persistent_workers=True)
 
-    model = RegressionResNet(pretrained=True, num_outputs=args.num_y, bias=args.bias).to(device)
+    model = RegressionResNet(pretrained=True, num_outputs=args.num_y, args=args).to(device)
     _ = print_model_param_nums(model=model)
     if torch.cuda.is_available():
         model = model.cuda()
@@ -143,7 +146,7 @@ def main(args):
                  'train_mse': running_train_loss,
                  'train_proj_error': projection_error_train,
                  'ww00': W_outer_pred[0, 0].item(),
-                 'W_outer_d': W_outer_d}
+                 'w_outer_d': W_outer_d}
         nc_tracker.load_dt(nc_dt, epoch=epoch)
 
         wandb.log(
@@ -183,6 +186,7 @@ if __name__ == '__main__':
     parser.add_argument('--max_epoch', type=int, default=500)
     parser.add_argument('--batch_size', type=int, default=64)
     parser.add_argument('--num_y', type=int, default=2)
+    parser.add_argument('--feat', type=str, default='b')
     parser.add_argument('--lr', type=float, default=1e-3)
     parser.add_argument('--lambda_H', type=float, default=1e-3)
     parser.add_argument('--lambda_W', type=float, default=1e-3)
@@ -199,7 +203,10 @@ if __name__ == '__main__':
 
     parser.add_argument('--exp_name', type=str, default='exp')
     args = parser.parse_args()
+    
     args.save_dir = os.path.join("./result/", args.exp_name)
+    if args.resume is not None: 
+        args.resume = os.path.join('./result', args.resume)
     if not os.path.exists(args.save_dir):
         os.makedirs(args.save_dir)
     set_log_path(args.save_dir)

@@ -5,12 +5,12 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=2
 #SBATCH --mem=80GB
-#SBATCH --time=96:00:00
+#SBATCH --time=48:00:00
 #SBATCH --gres=gpu
-#SBATCH --partition=a100_1,a100_2,v100
+#SBATCH --partition=a100_1,a100_2,v100,rtx8000
 
 # job info
-# LOSS=$1
+FEAT=$1
 
 # Singularity path
 ext3_path=/scratch/$USER/overlay-25GB-500K.ext3
@@ -22,7 +22,7 @@ singularity exec --nv \
 --overlay /scratch/lg154/sseg/dataset/tiny-imagenet-200.sqf:ro \
 ${sif_path} /bin/bash -c "
 source /ext3/env.sh
-python train.py --batch_size 512 --ufm --exp_name ufm_b512_ob_debug
+python train.py --batch_size 1024 --feat ${FEAT} --lr 2e-3 --warmup 10 --ufm --exp_name ufm_${FEAT}_ob_lr2
  " 
 
 

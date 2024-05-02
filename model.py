@@ -3,17 +3,66 @@ import torch.nn as nn
 from torchvision import models
 
 class RegressionResNet(nn.Module):
-    def __init__(self, pretrained=True, num_outputs=2, bias=True):
+    def __init__(self, pretrained=True, num_outputs=2, args=None):
         super(RegressionResNet, self).__init__()
+        self.args = args 
+        
         resnet_model = models.resnet18(pretrained=pretrained)
-        self.backbone = nn.Sequential(*list(resnet_model.children())[:-1])
+        self.backbone = nn.Sequential(*list(resnet_model.children())[:-2])
+        
+        if self.args.feat == 'b': 
+            self.feat = nn.Sequential(
+                nn.AdaptiveAvgPool2d(output_size=(1, 1)), 
+                nn.Flatten(),
+                nn.BatchNorm1d(resnet_model.fc.in_features, affine=False)
+                )
+        elif self.args.feat == 'bf': 
+            self.feat = nn.Sequential(
+                nn.AdaptiveAvgPool2d(output_size=(1, 1)),
+                nn.Flatten(),
+                nn.BatchNorm1d(resnet_model.fc.in_features, affine=False), 
+                nn.Linear(resnet_model.fc.in_features, resnet_model.fc.in_features)
+                )
+        elif self.args.feat == 'bft': 
+            self.feat = nn.Sequential(
+                nn.AdaptiveAvgPool2d(output_size=(1, 1)),
+                nn.Flatten(),
+                nn.BatchNorm1d(resnet_model.fc.in_features, affine=False), 
+                nn.Linear(resnet_model.fc.in_features, resnet_model.fc.in_features), 
+                nn.Tanh()
+                )
+        elif self.args.feat == 'bfrf': 
+            self.feat = nn.Sequential(
+                nn.AdaptiveAvgPool2d(output_size=(1, 1)),
+                nn.Flatten(),
+                nn.BatchNorm1d(resnet_model.fc.in_features, affine=False), 
+                nn.Linear(resnet_model.fc.in_features, resnet_model.fc.in_features), 
+                nn.ReLU(), 
+                nn.Linear(resnet_model.fc.in_features, resnet_model.fc.in_features), 
+                )
+        elif self.args.feat == 'f':    # without GAP 
+            self.feat = nn.Sequential(
+                nn.Flatten(), 
+                nn.Linear(resnet_model.fc.in_features * 7 * 7, resnet_model.fc.in_features)
+            )
+        elif self.args.feat == 'ft':    # without GAP 
+            self.feat = nn.Sequential(
+                nn.Flatten(), 
+                nn.Linear(resnet_model.fc.in_features * 7 * 7, resnet_model.fc.in_features),
+                nn.Tanh()
+            )
+        else: 
+            self.feat = nn.Sequential(
+                nn.AdaptiveAvgPool2d(output_size=(1, 1)), 
+                nn.Flatten()
+            )
 
-        self.fc = nn.Linear(resnet_model.fc.in_features, num_outputs, bias=bias)
+        self.fc = nn.Linear(resnet_model.fc.in_features, num_outputs, bias=args.bias)
         self.global_avg_pool = nn.AdaptiveAvgPool2d((1, 1))
     
     def forward(self, x, ret_feat=False):
-        feat = self.backbone(x)
-        feat = torch.flatten(feat, 1)
+        x = self.backbone(x)
+        feat = self.feat(x)
         out = self.fc(feat)
         if ret_feat:
             return out, feat

@@ -11,7 +11,7 @@ def get_scheduler(args, optimizer):
     """
 
     SCHEDULERS = {
-        'multi_step': optim.lr_scheduler.MultiStepLR(optimizer, milestones=[100, 200], gamma=0.1),
+        'multi_step': optim.lr_scheduler.MultiStepLR(optimizer, milestones=[800, 900], gamma=0.2),
         'cosine': optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.max_epoch),
     }
     return SCHEDULERS[args.scheduler]
