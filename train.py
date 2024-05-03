@@ -2,21 +2,17 @@ import os
 import pdb
 import pickle
 import torch
-import random
+import wandb
+import argparse
 import numpy as np
 import torch.nn as nn
-from torchvision import models, transforms
 from torch.utils.data import DataLoader
-from tqdm import tqdm
-import torch.nn.functional as F
-import wandb
-import logging
-import datetime
-import argparse
 from torch.nn.functional import mse_loss
 from torch.optim.lr_scheduler import LambdaLR
-from dataset import ImageTargetDataset, SubDataset, transform
-from model import RegressionResNet
+
+
+from dataset import SubDataset, get_dataloader
+from model import RegressionResNet, MLP
 from train_utils import Graph_Vars, get_feat_pred, compute_cosine_norm, gram_schmidt, get_scheduler, Train_Vars
 from utils import print_model_param_nums, set_log_path, log, print_args
 
@@ -27,7 +23,7 @@ def train_one_epoch(model, data_loader, optimizer, criterion, args):
     running_loss = 0.0
     all_feats = []
     for batch_idx, batch in enumerate(data_loader):
-        images = batch['image'].to(device, non_blocking=True)
+        images = batch['input'].to(device, non_blocking=True)
         targets = batch['target'].to(device, non_blocking=True)
         optimizer.zero_grad()
         outputs, feats = model(images, ret_feat=True)
@@ -62,16 +58,17 @@ def main(args):
                )
     wandb.config.update(args)
 
-    train_dataset = SubDataset('/vast/lg154/Carla_JPG/Train/train_list.txt',
-                               '/vast/lg154/Carla_JPG/Train/sub_targets.pkl', transform=transform, dim=args.num_y)
-    
-    # train_dataset = ImageTargetDataset('/vast/lg154/Carla_JPG/Train/images', '/vast/lg154/Carla_JPG/Train/targets', transform=transform, dim=args.num_y)
-    # val_dataset = ImageTargetDataset('/vast/zz4330/Carla_JPG/Val/images', '/vast/zz4330/Carla_JPG/Val/targets', transform=transform, dim=args.num_y)
-   
-    train_data_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=4, pin_memory=True, persistent_workers=True)
-    # val_data_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=4, pin_memory=True, persistent_workers=True)
+    train_loader, val_loader = get_dataloader(args)
+    if args.dataset == 'swimmer' or args.dataset == 'reacher':
+        args.num_x = train_loader.dataset.state_dim
+        args.num_y = train_loader.dataset.action_dim
 
-    model = RegressionResNet(pretrained=True, num_outputs=args.num_y, args=args).to(device)
+    # val_dataset = ImageTargetDataset('/vast/zz4330/Carla_JPG/Val/images', '/vast/zz4330/Carla_JPG/Val/targets', transform=transform, dim=args.num_y)
+    # val_data_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=4, pin_memory=True, persistent_workers=True)
+    if args.arch.startswith('res'):
+        model = RegressionResNet(pretrained=True, num_outputs=args.num_y, args=args).to(device)
+    elif args.arch.startswith('mlp'):
+        model = MLP(in_dim=args.num_x, out_dim=args.num_y, args=args, arch=args.arch.replace('mlp',''))
     _ = print_model_param_nums(model=model)
     if torch.cuda.is_available():
         model = model.cuda()
@@ -88,7 +85,7 @@ def main(args):
     if args.warmup>0: 
         warmup_scheduler = LambdaLR(optimizer, lr_lambda=lambda epoch: (epoch + 1) / args.warmup)
         
-        # lambda0 = lambda epoch: epoch / args.warmup if epoch < args.warmup else 1 * 0.2**((epoch-800)//100)
+    # lambda0 = lambda epoch: epoch / args.warmup if epoch < args.warmup else 1 * 0.2**((epoch-800)//100)
 
     if args.resume:
         if os.path.isfile(args.resume):
@@ -103,26 +100,32 @@ def main(args):
             print("=> no checkpoint found at '{}'".format(args.resume))
 
     # =================== theoretical solution ================
-    all_labels = []
-    with torch.no_grad():
-        for i, batch in enumerate(train_data_loader):
-            target = batch['target'].to(device)
-            all_labels.append(target)
-        all_labels = torch.cat(all_labels)   # [N, 2]
-    Sigma = torch.matmul(all_labels.T, all_labels)/len(all_labels)
-    Sigma = Sigma.cpu().numpy()
+    def get_theoretical_solution(train_loader):
+        all_labels = []
+        with torch.no_grad():
+            for i, batch in enumerate(train_loader):
+                target = batch['target'].to(device)
+                all_labels.append(target)
+            all_labels = torch.cat(all_labels)   # [N, 2]
+        Sigma = torch.matmul(all_labels.T, all_labels)/len(all_labels)
+        Sigma = Sigma.cpu().numpy()
 
-    eigenvalues, eigenvectors = np.linalg.eig(Sigma)
-    sqrt_eigenvalues = np.sqrt(eigenvalues)
-    Sigma_sqrt = eigenvectors.dot(np.diag(sqrt_eigenvalues)).dot(np.linalg.inv(eigenvectors))
+        eigenvalues, eigenvectors = np.linalg.eig(Sigma)
+        sqrt_eigenvalues = np.sqrt(eigenvalues)
+        Sigma_sqrt = eigenvectors.dot(np.diag(sqrt_eigenvalues)).dot(np.linalg.inv(eigenvectors))
 
-    W_outer = args.lambda_H * (Sigma_sqrt/np.sqrt(args.lambda_H*args.lambda_W) - np.eye(args.num_y))
+        W_outer = args.lambda_H * (Sigma_sqrt/np.sqrt(args.lambda_H*args.lambda_W) - np.eye(args.num_y))
+        return W_outer, all_labels.cpu().numpy()
+
+    W_outer, all_labels = get_theoretical_solution(train_loader)
+    theory_stat = train_loader.dataset.get_theory_stats()
     
     filename = os.path.join(args.save_dir, 'theory.pkl')
     with open(filename, 'wb') as f:
-        pickle.dump({'target':all_labels.cpu().numpy(), 'W_outer':W_outer, 'lambda_H':args.lambda_H, 'lambda_W':args.lambda_W}, f)
+        pickle.dump({'target':all_labels, 'W_outer':W_outer, 'lambda_H':args.lambda_H, 'lambda_W':args.lambda_W}, f)
         log('--store theoretical result to {}'.format(filename))
         log('====> Theoretical ww00: {:.4f}, ww01: {:.4f}, ww11: {:.4f}'.format(W_outer[0, 0], W_outer[0, 1], W_outer[1, 1]))
+        log(', '.join([f'{key}: {round(value,4)}' for key, value in theory_stat.items()]))
 
     # ================== Training ==================
     criterion = nn.MSELoss()
@@ -135,7 +138,7 @@ def main(args):
         else:
             scheduler.step()
             
-        all_feats, train_loss = train_one_epoch(model, train_data_loader, optimizer, criterion, args=args)
+        all_feats, train_loss = train_one_epoch(model, train_loader, optimizer, criterion, args=args)
 
         # === cosine between Wi's
         W = model.fc.weight.data  # [2, 512]
@@ -146,7 +149,7 @@ def main(args):
         
         # ==== calculate training feature with updated W
         if True: 
-            all_feats, preds, labels = get_feat_pred(model, train_data_loader)
+            all_feats, preds, labels = get_feat_pred(model, train_loader)
             train_loss = criterion(preds, labels)
 
         # === compute projection error

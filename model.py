@@ -1,6 +1,8 @@
 import torch
+import numpy as np
 import torch.nn as nn
 from torchvision import models
+
 
 class RegressionResNet(nn.Module):
     def __init__(self, pretrained=True, num_outputs=2, args=None):
@@ -72,13 +74,55 @@ class RegressionResNet(nn.Module):
         else:
             return out
 
-    def get_last_layer_embeddings(self, x):
-        """Extract embeddings from the last layer using a hook and global average pooling."""
-        def hook_fn(module, input, output):
-            pooled_output = self.global_avg_pool(output)
-            self.embeddings = pooled_output.view(pooled_output.size(0), -1).detach()
 
-        hook = self.model.layer4.register_forward_hook(hook_fn)
-        self.forward(x)
-        hook.remove()
-        return self.embeddings
+class MLP(nn.Module):
+    def __init__(self, in_dim, out_dim, args, arch='256_256', max_action=1.0):
+        super(MLP, self).__init__()
+        # in_dim is state_dim
+        self.args = args
+        module_list = []
+        for i, hidden_size in enumerate(arch.split('_')):
+            hidden_size = int(hidden_size)
+            module_list.append(nn.Linear(in_dim, hidden_size))
+            module_list.append(nn.BatchNorm1d(hidden_size))
+            module_list.append(nn.ReLU())
+            in_dim = hidden_size
+        self.backbone = nn.Sequential(*module_list)
+
+        if self.args.feat == 'b':
+            self.feat = nn.Sequential(
+                nn.BatchNorm1d(in_dim, affine=False)
+                )
+        elif self.args.feat == 'f':
+            self.feat = nn.Sequential(
+                nn.Linear(in_dim, in_dim)
+            )
+        elif self.args.feat == 'ft':
+            self.feat = nn.Sequential(
+                nn.Linear(in_dim, in_dim),
+                nn.Tanh()
+            )
+        else:
+            self.feat = nn.Sequential(
+                nn.Identity()
+            )
+
+        self.fc = nn.Linear(in_dim, out_dim, bias=args.bias)
+
+        self.max_action = max_action
+
+    def forward(self, state, ret_feat=False):
+        x = self.backbone(state)
+        feat = self.feat(x)
+        out = self.fc(feat)
+        if ret_feat:
+            return out, feat
+        else:
+            return out
+
+    @torch.no_grad()
+    def act(self, state: np.ndarray, device: str = "cpu") -> np.ndarray:
+        state = torch.tensor(state.reshape(1, -1), device=device, dtype=torch.float32)
+        # Modified: Clip the actions, since we do not have a tanh in the actor.
+        action = self(state).clamp(min=-self.max_action, max=self.max_action)
+        return action.cpu().data.numpy().flatten()
