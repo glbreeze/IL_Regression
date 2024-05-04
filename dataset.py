@@ -9,7 +9,6 @@ from torch.utils.data import DataLoader
 from torchvision import transforms
 
 DATA_FOLDER = '../dataset/mujoco_data/'
-DATA_RATIO = 0.1
 
 
 def get_dataloader(args):
@@ -18,16 +17,24 @@ def get_dataloader(args):
         train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=4, pin_memory=True, persistent_workers=True)
         val_loader = train_loader
     elif args.dataset == "swimmer" or args.dataset == 'reacher':
+        if args.dataset == 'swimmer':
+            DATA_RATIO = 0.1
+        else:
+            DATA_RATIO = 1.0
         train_dataset = MujocoBuffer(data_folder=DATA_FOLDER,
             env=args.dataset,
             split='train',
             data_ratio=DATA_RATIO,
+            args=args
         )
         val_dataset = MujocoBuffer(
             data_folder=DATA_FOLDER,
             env=args.dataset,
             split='test',
             data_ratio=DATA_RATIO,
+            args=args,
+            y_shift=train_dataset.y_shift,
+            div=train_dataset.div
         )
 
         train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
@@ -122,16 +129,45 @@ class MujocoBuffer(Dataset):
             data_folder: str,
             env: str,
             split: str,
-            data_ratio
+            data_ratio,
+            args = None,
+            y_shift = None,
+            div = None
     ):
         self.size = 0
+        self.args=args
         self.state_dim = 0
         self.action_dim = 0
 
         self.states, self.actions = None, None
         self._load_dataset(data_folder, env, split, data_ratio)
+        if self.args.y_norm == 'null':
+            self.y_shift = None
+            self.div = None
+        elif self.args.y_norm in ['norm', 'std', 'scale']:
+            if split == 'train':
+                if self.args.y_norm == 'norm':
+                    self.y_shift = np.mean(self.actions, axis=0)
+                    centered_data = self.actions - self.y_shift
+                    covariance_matrix = np.dot(centered_data.T, centered_data) / len(self.actions)
+                    self.div = np.diag(1 / np.sqrt(np.diag(covariance_matrix)))
+                elif self.args.y_norm == 'scale':
+                    self.y_shift = np.min(self.actions, axis=0)
+                    centered_data = self.actions - self.y_shift
+                    self.div = np.diag( 1/(np.max(self.actions, axis=0)- self.y_shift))
+                elif self.args.y_norm == 'std':
+                    self.y_shift = np.mean(self.actions, axis=0)
+                    centered_data = self.actions - self.y_shift
+                    covariance_matrix = np.dot(centered_data.T, centered_data) / len(self.actions)
+                    eigenvalues, eigenvectors = np.linalg.eig(covariance_matrix)
+                    self.div = eigenvectors @ np.diag(1 / np.sqrt(eigenvalues)) @ np.linalg.inv(eigenvectors)
+            else:
+                self.y_shift = y_shift
+                centered_data = self.actions - self.y_shift
+                self.div = div
+            self.actions = centered_data @ self.div
 
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            # self.actions = centered_data / self.div
 
     def _to_tensor(self, data: np.ndarray) -> torch.Tensor:
         return torch.tensor(data, dtype=torch.float32)

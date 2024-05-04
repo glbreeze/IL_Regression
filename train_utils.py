@@ -65,23 +65,22 @@ def gram_schmidt(W):
 
 
 class Graph_Vars:
-    def __init__(self):
+    def __init__(self, dim=2):
         self.epoch = []
         self.lr = []
-        
+
         self.train_mse = []
-        self.val_mse = []
-
         self.train_proj_error = []
+        self.val_mse = []
         self.val_proj_error = []
-        self.cos_w12 = []
-        self.cos_w13 = []
-        self.cos_w23 = []
+        self.w_outer_d = []
+        self.ww00 = []
+        if dim==2:
+            self.ww01 = []
+            self.ww11 = []
 
-    def load_dt(self, nc_dt, epoch, lr=None):
+    def load_dt(self, nc_dt, epoch):
         self.epoch.append(epoch)
-        if lr:
-            self.lr.append(lr)
         for key in nc_dt:
             try:
                 self.__getattribute__(key).append(nc_dt[key])

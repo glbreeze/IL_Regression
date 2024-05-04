@@ -48,16 +48,6 @@ def train_one_epoch(model, data_loader, optimizer, criterion, args):
 def main(args):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    os.environ["WANDB_API_KEY"] = "0c0abb4e8b5ce4ee1b1a4ef799edece5f15386ee"
-    os.environ["WANDB_MODE"] = "online"  # "dryrun"
-    os.environ["WANDB_CACHE_DIR"] = "/scratch/lg154/sseg/.cache/wandb"
-    os.environ["WANDB_CONFIG_DIR"] = "/scratch/lg154/sseg/.config/wandb"
-    wandb.login(key='0c0abb4e8b5ce4ee1b1a4ef799edece5f15386ee')
-    wandb.init(project='reg_' + args.dataset,
-               name=args.exp_name.split('/')[-1]
-               )
-    wandb.config.update(args)
-
     train_loader, val_loader = get_dataloader(args)
     if args.dataset == 'swimmer' or args.dataset == 'reacher':
         args.num_x = train_loader.dataset.state_dim
@@ -115,21 +105,38 @@ def main(args):
         Sigma_sqrt = eigenvectors.dot(np.diag(sqrt_eigenvalues)).dot(np.linalg.inv(eigenvectors))
 
         W_outer = args.lambda_H * (Sigma_sqrt/np.sqrt(args.lambda_H*args.lambda_W) - np.eye(args.num_y))
-        return W_outer, all_labels.cpu().numpy()
+        return W_outer, all_labels.cpu().numpy(), Sigma_sqrt
 
-    W_outer, all_labels = get_theoretical_solution(train_loader)
+    W_outer, all_labels,  Sigma_sqrt= get_theoretical_solution(train_loader)
     theory_stat = train_loader.dataset.get_theory_stats()
-    
+
+    # ================== setup wandb  ==================
+    args.s00 = Sigma_sqrt[0, 0]
+    args.s01 = Sigma_sqrt[0, 1]
+    args.s11 = Sigma_sqrt[1, 1]
+
+    os.environ["WANDB_API_KEY"] = "0c0abb4e8b5ce4ee1b1a4ef799edece5f15386ee"
+    os.environ["WANDB_MODE"] = "online"  # "dryrun"
+    os.environ["WANDB_CACHE_DIR"] = "/scratch/lg154/sseg/.cache/wandb"
+    os.environ["WANDB_CONFIG_DIR"] = "/scratch/lg154/sseg/.config/wandb"
+    wandb.login(key='0c0abb4e8b5ce4ee1b1a4ef799edece5f15386ee')
+    wandb.init(project='reg_' + args.dataset,
+               name=args.exp_name.split('/')[-1]
+               )
+    wandb.config.update(args)
+
+    # ================== log the theoretical result  ==================
     filename = os.path.join(args.save_dir, 'theory.pkl')
     with open(filename, 'wb') as f:
         pickle.dump({'target':all_labels, 'W_outer':W_outer, 'lambda_H':args.lambda_H, 'lambda_W':args.lambda_W}, f)
         log('--store theoretical result to {}'.format(filename))
+        log('====> Theoretical s00: {:.5f}, s01: {:.5f}, s11: {:.5f}'.format(Sigma_sqrt[0, 0], Sigma_sqrt[0, 1], Sigma_sqrt[1, 1]))
         log('====> Theoretical ww00: {:.4f}, ww01: {:.4f}, ww11: {:.4f}'.format(W_outer[0, 0], W_outer[0, 1], W_outer[1, 1]))
         log(', '.join([f'{key}: {round(value,4)}' for key, value in theory_stat.items()]))
 
     # ================== Training ==================
     criterion = nn.MSELoss()
-    nc_tracker = Train_Vars(dim=args.num_y)
+    nc_tracker = Graph_Vars(dim=args.num_y)
     wandb.watch(model, criterion, log="all", log_freq=10)
     for epoch in range(args.start_epoch, args.max_epoch):
 
@@ -143,8 +150,8 @@ def main(args):
         # === cosine between Wi's
         W = model.fc.weight.data  # [2, 512]
 
-        W_outer_pred = torch.matmul(W, W.T)
-        W_outer_d = W_outer - W_outer_pred.cpu().numpy()
+        W_outer_pred = torch.matmul(W, W.T).cpu().numpy()
+        W_outer_d = W_outer - W_outer_pred
         W_outer_d = np.sum(W_outer_d**2)
         
         # ==== calculate training feature with updated W
@@ -158,12 +165,21 @@ def main(args):
         h_projected = torch.mm(all_feats, P_E)
         projection_error_train = mse_loss(h_projected, all_feats).item()
 
+        # ===============compute val mse and projection error==================
+        feats, preds, labels = get_feat_pred(model, val_loader)
+        val_loss = criterion(preds, labels)
+
+        h_projected = torch.mm(feats, P_E)
+        projection_error_val = mse_loss(h_projected, feats).item()
+
         nc_dt = {'lr': optimizer.param_groups[0]['lr'],
                  'train_mse': train_loss,
                  'train_proj_error': projection_error_train,
-                 'ww00': W_outer_pred[0, 0].item(),
-                 'ww01': W_outer_pred[0, 1].item(),
-                 'ww11': W_outer_pred[1, 1].item(),
+                 'val_mse': val_loss,
+                 'val_proj_error': projection_error_val,
+                 'ww00': W_outer_pred[0, 0] / np.sqrt(np.sum(W_outer_d**2)),
+                 'ww01': W_outer_pred[0, 1] / np.sqrt(np.sum(W_outer_d**2)),
+                 'ww11': W_outer_pred[1, 1] / np.sqrt(np.sum(W_outer_d**2)),
                  'w_outer_d': W_outer_d}
         nc_tracker.load_dt(nc_dt, epoch=epoch)
 
@@ -171,15 +187,17 @@ def main(args):
             {'train/lr': optimizer.param_groups[0]['lr'],
              'train/train_mse': train_loss,
              'train/project_error': projection_error_train,
-             'W/ww00': W_outer_pred[0, 0].item(),
-             'W/ww01': W_outer_pred[0, 1].item(),
-             'W/ww11': W_outer_pred[1, 1].item(),
+             'val/val_mse': val_loss,
+             'val/project_error': projection_error_val,
+             'W/ww00': nc_dt['ww00'],
+             'W/ww01': nc_dt['ww01'],
+             'W/ww11': nc_dt['ww11'],
              'W/W_outer_d': W_outer_d
              },
             step=epoch)
 
         log('Epoch {}/{}, runnning train mse: {:.4f}, ww00: {:.4f}, ww01: {:.4f}, ww11: {:.4f}, W_outer_d: {:.4f}'.format(
-            epoch, args.max_epoch, train_loss, W_outer_pred[0, 0].item(), W_outer_pred[0, 1].item(), W_outer_pred[1, 1].item(), W_outer_d
+            epoch, args.max_epoch, train_loss, nc_dt['ww00'], nc_dt['ww01'], nc_dt['ww11'], W_outer_d
         ))
 
         if epoch % args.save_freq == 0:
@@ -203,6 +221,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Regression NC")
     parser.add_argument('--dataset', type=str, default='Carla')
     parser.add_argument('--arch', type=str, default='resnet18')
+    parser.add_argument('--y_norm', type=str, default='null')
 
     parser.add_argument('--max_epoch', type=int, default=1000)
     parser.add_argument('--batch_size', type=int, default=64)
@@ -221,7 +240,7 @@ if __name__ == '__main__':
     parser.add_argument('--resume', type=str, default=None)
     parser.add_argument('--start_epoch', default=0, type=int, metavar='N',
                         help='manual epoch number (useful on restarts)')
-    parser.add_argument('--save_freq', default=5, type=int)
+    parser.add_argument('--save_freq', default=10, type=int)
 
     parser.add_argument('--exp_name', type=str, default='exp')
     args = parser.parse_args()
