@@ -226,7 +226,7 @@ if __name__ == '__main__':
     parser.add_argument('--exp_name', type=str, default='exp')
     args = parser.parse_args()
     
-    args.save_dir = os.path.join("./result/", args.exp_name)
+    args.save_dir = os.path.join("./result/{}/".format(args.dataset), args.exp_name)
     if args.resume is not None: 
         args.resume = os.path.join('./result', args.resume)
     if not os.path.exists(args.save_dir):

@@ -11,7 +11,7 @@ def get_scheduler(args, optimizer):
     """
 
     SCHEDULERS = {
-        'multi_step': optim.lr_scheduler.MultiStepLR(optimizer, milestones=[800, 900], gamma=0.2),
+        'multi_step': optim.lr_scheduler.MultiStepLR(optimizer, milestones=[150, 300], gamma=0.2),
         'cosine': optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.max_epoch),
     }
     return SCHEDULERS[args.scheduler]
@@ -24,7 +24,7 @@ def get_feat_pred(model, loader):
 
     with torch.no_grad():
         for i, batch in enumerate(loader):
-            input = batch['image'].to(device)
+            input = batch['input'].to(device)
             target = batch['target'].to(device)
             input, target = input.to(device), target.to(device)
             pred, feat = model(input, ret_feat=True)

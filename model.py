@@ -93,9 +93,20 @@ class MLP(nn.Module):
             self.feat = nn.Sequential(
                 nn.BatchNorm1d(in_dim, affine=False)
                 )
+        elif self.args.feat == 'bf':
+            self.feat = nn.Sequential(
+                nn.BatchNorm1d(in_dim, affine=False), 
+                nn.Linear(in_dim, in_dim)
+                )
         elif self.args.feat == 'f':
             self.feat = nn.Sequential(
                 nn.Linear(in_dim, in_dim)
+            )
+        elif self.args.feat == 'fbg':
+            self.feat = nn.Sequential(
+                nn.Linear(in_dim, in_dim),
+                nn.BatchNorm1d(in_dim, affine=True),
+                nn.GELU()
             )
         elif self.args.feat == 'ft':
             self.feat = nn.Sequential(

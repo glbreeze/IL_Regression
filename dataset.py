@@ -9,7 +9,7 @@ from torch.utils.data import DataLoader
 from torchvision import transforms
 
 DATA_FOLDER = '../dataset/mujoco_data/'
-DATA_RATIO = 1.0
+DATA_RATIO = 0.1
 
 
 def get_dataloader(args):
