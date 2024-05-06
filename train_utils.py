@@ -1,5 +1,6 @@
 import torch
 import os
+import numpy as np
 import torch.optim as optim
 
 
@@ -108,3 +109,28 @@ class Train_Vars:
                 self.__getattribute__(key).append(nc_dt[key])
             except:
                 print('{} is not attribute of Graph var'.format(key))
+
+
+def get_theoretical_solution(train_loader, args, bias=None, all_labels=None):
+    if all_labels is None:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        all_labels = []
+        with torch.no_grad():
+            for i, batch in enumerate(train_loader):
+                target = batch['target'].to(device)
+                all_labels.append(target)
+            all_labels = torch.cat(all_labels)   # [N, 2]
+
+    if bias is not None:
+        center_labels = all_labels - bias  # [N,2] - [2]
+    else:
+        center_labels = all_labels
+    Sigma = torch.matmul(center_labels.T, center_labels)/len(center_labels)
+    Sigma = Sigma.cpu().numpy()
+
+    eigenvalues, eigenvectors = np.linalg.eig(Sigma)
+    sqrt_eigenvalues = np.sqrt(eigenvalues)
+    Sigma_sqrt = eigenvectors @ np.diag(sqrt_eigenvalues) @ np.linalg.inv(eigenvectors)
+
+    W_outer = args.lambda_H * (Sigma_sqrt/np.sqrt(args.lambda_H*args.lambda_W) - np.eye(args.num_y))
+    return W_outer, Sigma_sqrt, all_labels # all_labels is still tensor

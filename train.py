@@ -13,7 +13,7 @@ from torch.optim.lr_scheduler import LambdaLR
 
 from dataset import SubDataset, get_dataloader
 from model import RegressionResNet, MLP
-from train_utils import Graph_Vars, get_feat_pred, compute_cosine_norm, gram_schmidt, get_scheduler, Train_Vars
+from train_utils import Graph_Vars, get_feat_pred, compute_cosine_norm, gram_schmidt, get_scheduler, Train_Vars, get_theoretical_solution
 from utils import print_model_param_nums, set_log_path, log, print_args
 
 
@@ -90,24 +90,7 @@ def main(args):
             print("=> no checkpoint found at '{}'".format(args.resume))
 
     # =================== theoretical solution ================
-    def get_theoretical_solution(train_loader):
-        all_labels = []
-        with torch.no_grad():
-            for i, batch in enumerate(train_loader):
-                target = batch['target'].to(device)
-                all_labels.append(target)
-            all_labels = torch.cat(all_labels)   # [N, 2]
-        Sigma = torch.matmul(all_labels.T, all_labels)/len(all_labels)
-        Sigma = Sigma.cpu().numpy()
-
-        eigenvalues, eigenvectors = np.linalg.eig(Sigma)
-        sqrt_eigenvalues = np.sqrt(eigenvalues)
-        Sigma_sqrt = eigenvectors.dot(np.diag(sqrt_eigenvalues)).dot(np.linalg.inv(eigenvectors))
-
-        W_outer = args.lambda_H * (Sigma_sqrt/np.sqrt(args.lambda_H*args.lambda_W) - np.eye(args.num_y))
-        return W_outer, all_labels.cpu().numpy(), Sigma_sqrt
-
-    W_outer, all_labels,  Sigma_sqrt= get_theoretical_solution(train_loader)
+    W_outer, Sigma_sqrt, all_labels = get_theoretical_solution(train_loader, args, bias=None, all_labels=None)
     theory_stat = train_loader.dataset.get_theory_stats()
 
     # ================== setup wandb  ==================
@@ -128,7 +111,7 @@ def main(args):
     # ================== log the theoretical result  ==================
     filename = os.path.join(args.save_dir, 'theory.pkl')
     with open(filename, 'wb') as f:
-        pickle.dump({'target':all_labels, 'W_outer':W_outer, 'lambda_H':args.lambda_H, 'lambda_W':args.lambda_W}, f)
+        pickle.dump({'target':all_labels.cpu().numpy(), 'W_outer':W_outer, 'lambda_H':args.lambda_H, 'lambda_W':args.lambda_W}, f)
         log('--store theoretical result to {}'.format(filename))
         log('====> Theoretical s00: {:.5f}, s01: {:.5f}, s11: {:.5f}'.format(Sigma_sqrt[0, 0], Sigma_sqrt[0, 1], Sigma_sqrt[1, 1]))
         log('====> Theoretical ww00: {:.4f}, ww01: {:.4f}, ww11: {:.4f}'.format(W_outer[0, 0], W_outer[0, 1], W_outer[1, 1]))
@@ -149,13 +132,11 @@ def main(args):
 
         # === cosine between Wi's
         W = model.fc.weight.data  # [2, 512]
-
         W_outer_pred = torch.matmul(W, W.T).cpu().numpy()
-        W_outer_d = W_outer - W_outer_pred
-        W_outer_d = np.sum(W_outer_d**2)
+        W_outer_d = np.sum(abs(W_outer - W_outer_pred))
         
         # ==== calculate training feature with updated W
-        if True: 
+        if True:
             all_feats, preds, labels = get_feat_pred(model, train_loader)
             train_loss = criterion(preds, labels)
 
@@ -164,6 +145,17 @@ def main(args):
         P_E = torch.mm(U.T, U)  # Projection matrix using orthonormal basis
         h_projected = torch.mm(all_feats, P_E)
         projection_error_train = mse_loss(h_projected, all_feats).item()
+
+        # === compute theoretical value for WW^T with updated bias
+        if args.bias:
+            W_outer_new, _, _ = get_theoretical_solution(train_loader, args, all_labels=labels, bias=model.fc.bias.data)
+            wandb.log(
+                {'W/ww00_th1': W_outer_new[0,0],
+                 'W/ww01_th1': W_outer_new[0,1],
+                 'W/ww11_th1': W_outer_new[1,1],
+                 'W/W_outer_d': np.sum(abs(W_outer_new - W_outer_pred))
+                 },
+                step=epoch)
 
         # ===============compute val mse and projection error==================
         feats, preds, labels = get_feat_pred(model, val_loader)
@@ -177,9 +169,9 @@ def main(args):
                  'train_proj_error': projection_error_train,
                  'val_mse': val_loss,
                  'val_proj_error': projection_error_val,
-                 'ww00': W_outer_pred[0, 0] / np.sqrt(np.sum(W_outer_d**2)),
-                 'ww01': W_outer_pred[0, 1] / np.sqrt(np.sum(W_outer_d**2)),
-                 'ww11': W_outer_pred[1, 1] / np.sqrt(np.sum(W_outer_d**2)),
+                 'ww00': W_outer_pred[0, 0],
+                 'ww01': W_outer_pred[0, 1],
+                 'ww11': W_outer_pred[1, 1],
                  'w_outer_d': W_outer_d}
         nc_tracker.load_dt(nc_dt, epoch=epoch)
 
