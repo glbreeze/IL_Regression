@@ -113,6 +113,16 @@ class MLP(nn.Module):
                 nn.Linear(in_dim, in_dim),
                 nn.Tanh()
             )
+        elif self.args.feat == 'fp':
+            self.feat = nn.Sequential(
+                nn.Linear(in_dim, in_dim),
+                nn.PReLU()
+            )
+        elif self.args.feat == 'fr':
+            self.feat = nn.Sequential(
+                nn.Linear(in_dim, in_dim),
+                nn.ReLU()
+            )
         else:
             self.feat = nn.Sequential(
                 nn.Identity()

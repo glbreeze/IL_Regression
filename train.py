@@ -103,7 +103,7 @@ def main(args):
     os.environ["WANDB_CACHE_DIR"] = "/scratch/lg154/sseg/.cache/wandb"
     os.environ["WANDB_CONFIG_DIR"] = "/scratch/lg154/sseg/.config/wandb"
     wandb.login(key='0c0abb4e8b5ce4ee1b1a4ef799edece5f15386ee')
-    wandb.init(project='reg_' + args.dataset,
+    wandb.init(project='reg1_' + args.dataset,
                name=args.exp_name.split('/')[-1]
                )
     wandb.config.update(args)
@@ -122,19 +122,18 @@ def main(args):
     nc_tracker = Graph_Vars(dim=args.num_y)
     wandb.watch(model, criterion, log="all", log_freq=10)
     for epoch in range(args.start_epoch, args.max_epoch):
-
+            
+        all_feats, train_loss = train_one_epoch(model, train_loader, optimizer, criterion, args=args)
         if epoch < args.warmup:
             warmup_scheduler.step()
         else:
             scheduler.step()
-            
-        all_feats, train_loss = train_one_epoch(model, train_loader, optimizer, criterion, args=args)
 
         # === cosine between Wi's
         W = model.fc.weight.data  # [2, 512]
         W_outer_pred = torch.matmul(W, W.T).cpu().numpy()
         W_outer_d = np.sum(abs(W_outer - W_outer_pred))
-        
+  
         # ==== calculate training feature with updated W
         if True:
             all_feats, preds, labels = get_feat_pred(model, train_loader)
@@ -147,15 +146,36 @@ def main(args):
         projection_error_train = mse_loss(h_projected, all_feats).item()
 
         # === compute theoretical value for WW^T with updated bias
-        if args.bias:
+        if args.bias and args.ufm:
             W_outer_new, _, _ = get_theoretical_solution(train_loader, args, all_labels=labels, bias=model.fc.bias.data)
+            W_outer_d = np.sum(abs(W_outer_new - W_outer_pred))
             wandb.log(
                 {'W/ww00_th1': W_outer_new[0,0],
                  'W/ww01_th1': W_outer_new[0,1],
-                 'W/ww11_th1': W_outer_new[1,1],
-                 'W/W_outer_d': np.sum(abs(W_outer_new - W_outer_pred))
+                 'W/ww11_th1': W_outer_new[1,1], 
+                 'W/b0': model.fc.bias[0].item(), 
+                 'W/b1': model.fc.bias[1].item(),
                  },
                 step=epoch)
+        
+        if not args.ufm: 
+            if args.bias: 
+                W_outer_new, Sigma_sqrt, _ = get_theoretical_solution(train_loader, args, all_labels=labels, bias=model.fc.bias.data)
+            else: 
+                pass # use Sigma_sqrt computed before 
+            def compute_ww_d(ww, ss, c):  # ww: W_outer_pred, ss: Theoretical Sigma_sqrt 
+                norm_ww = ww / np.sqrt(np.sum(ww**2))
+                target = ( ss - c * np.eye(2) ) / np.linalg.norm(ss - c * np.eye(2))
+                return np.sum(abs(norm_ww-target))
+            min_d = 100.0
+            min_c = 0 
+            for c in np.logspace(-7, -1, 100): 
+                d = compute_ww_d(W_outer_pred, Sigma_sqrt, c)
+                if d < min_d: 
+                    min_d = d 
+                    min_c = c 
+            W_outer_d = min_d
+            log('----W_outer_d is {:.5f} with c {:.5f}'.format(W_outer_d, min_c))
 
         # ===============compute val mse and projection error==================
         feats, preds, labels = get_feat_pred(model, val_loader)
@@ -184,9 +204,11 @@ def main(args):
              'W/ww00': nc_dt['ww00'],
              'W/ww01': nc_dt['ww01'],
              'W/ww11': nc_dt['ww11'],
-             'W/W_outer_d': W_outer_d
+             'W/W_outer_d': W_outer_d,
              },
             step=epoch)
+        if not args.ufm: 
+            wandb.log({'W/c': min_c}, step=epoch)
 
         log('Epoch {}/{}, runnning train mse: {:.4f}, ww00: {:.4f}, ww01: {:.4f}, ww11: {:.4f}, W_outer_d: {:.4f}'.format(
             epoch, args.max_epoch, train_loss, nc_dt['ww00'], nc_dt['ww01'], nc_dt['ww11'], W_outer_d
