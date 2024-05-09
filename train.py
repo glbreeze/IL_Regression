@@ -90,8 +90,8 @@ def main(args):
             print("=> no checkpoint found at '{}'".format(args.resume))
 
     # =================== theoretical solution ================
-    W_outer, Sigma_sqrt, all_labels = get_theoretical_solution(train_loader, args, bias=None, all_labels=None)
-    theory_stat = train_loader.dataset.get_theory_stats()
+    W_outer, Sigma_sqrt, all_labels = get_theoretical_solution(train_loader, args, bias=None, all_labels=None, center=args.bias)
+    theory_stat = train_loader.dataset.get_theory_stats(center=args.bias)
 
     # ================== setup wandb  ==================
     args.s00 = Sigma_sqrt[0, 0]
@@ -157,25 +157,64 @@ def main(args):
                  'W/b1': model.fc.bias[1].item(),
                  },
                 step=epoch)
-        
-        if not args.ufm: 
-            if args.bias: 
-                W_outer_new, Sigma_sqrt, _ = get_theoretical_solution(train_loader, args, all_labels=labels, bias=model.fc.bias.data)
-            else: 
-                pass # use Sigma_sqrt computed before 
-            def compute_ww_d(ww, ss, c):  # ww: W_outer_pred, ss: Theoretical Sigma_sqrt 
-                norm_ww = ww / np.sqrt(np.sum(ww**2))
-                target = ( ss - c * np.eye(2) ) / np.linalg.norm(ss - c * np.eye(2))
-                return np.sum(abs(norm_ww-target))
-            min_d = 100.0
-            min_c = 0 
-            for c in np.logspace(-7, -1, 100): 
-                d = compute_ww_d(W_outer_pred, Sigma_sqrt, c)
-                if d < min_d: 
-                    min_d = d 
-                    min_c = c 
-            W_outer_d = min_d
-            log('----W_outer_d is {:.5f} with c {:.5f}'.format(W_outer_d, min_c))
+        # ================ NC2 ================
+        WWT = W_outer_pred
+        WWT_normalized = WWT / np.linalg.norm(WWT)
+        min_eigval = theory_stat['min_eigval']
+        Sigma_sqrt = np.array([theory_stat[k] for k in ['sigma11', 'sigma12', 'sigma21', 'sigma22']]).reshape(2, 2)
+
+        c_to_plot = np.linspace(0, min_eigval, num=1000)
+        NC2_to_plot = []
+        NC2_11_to_plot = []
+        NC2_12_to_plot = []
+        NC2_22_to_plot = []
+        for c in c_to_plot:
+            c_sqrt = c ** 0.5
+            A = Sigma_sqrt - c_sqrt * np.eye(2)
+            A_normalized = A / np.linalg.norm(A)
+            diff_mat = WWT_normalized - A_normalized
+            NC2_to_plot.append(np.linalg.norm(diff_mat))
+            NC2_11_to_plot.append(diff_mat[0, 0])
+            NC2_12_to_plot.append(diff_mat[0, 1])
+            NC2_22_to_plot.append(diff_mat[1, 1])
+
+        data = [[a, b, c, d, f] for (a, b, c, d, f) in
+                zip(c_to_plot, NC2_to_plot, NC2_11_to_plot, NC2_12_to_plot, NC2_22_to_plot)]
+        table = wandb.Table(data=data, columns=["c", "NC2", "NC2_11", "NC2_12", "NC2_22"])
+        wandb.log(
+            {
+                "NC2(c)": wandb.plot.line(
+                    table, "c", "NC2", title="NC2 as a Function of c"
+                )
+            }
+        )
+
+        slamH_to_plot = np.linspace(0.0001, min_eigval/np.sqrt(args.wd), num=1000)
+        NC2_to_plot = []
+        NC2_norm_to_plot = []
+        for slamH in slamH_to_plot:
+            A = slamH * Sigma_sqrt / (args.wd ** 0.5) - (slamH ** 2) * np.eye(2)
+            NC2_to_plot.append(np.linalg.norm(WWT - A))
+            NC2_norm_to_plot.append(np.linalg.norm(WWT_normalized - A / np.maximum(np.linalg.norm(A), 1e-6)))
+
+        data = [[a, b, c] for (a, b, c) in zip(slamH_to_plot, NC2_to_plot, NC2_norm_to_plot)]
+        table = wandb.Table(data=data, columns=["slamH", "NC2", "NC2_norm"])
+        wandb.log(
+            {
+                "NC2(slamH)": wandb.plot.line(
+                    table, "slamH", "NC2", title="NC2 as a Function of c and lamH"
+                )
+            }
+        )
+        wandb.log(
+            {
+                "NC2(slamH)": wandb.plot.line(
+                    table, "slamH", "NC2_norm", title="NC2 norm as a Function of c and lamH"
+                )
+            }
+        )
+        best_slamH = slamH[np.argmin(np.array(NC2_to_plot))]
+        wandb.log({'slamH': best_slamH},step=epoch)
 
         # ===============compute val mse and projection error==================
         feats, preds, labels = get_feat_pred(model, val_loader)
@@ -207,8 +246,7 @@ def main(args):
              'W/W_outer_d': W_outer_d,
              },
             step=epoch)
-        if not args.ufm: 
-            wandb.log({'W/c': min_c}, step=epoch)
+
 
         log('Epoch {}/{}, runnning train mse: {:.4f}, ww00: {:.4f}, ww01: {:.4f}, ww11: {:.4f}, W_outer_d: {:.4f}'.format(
             epoch, args.max_epoch, train_loss, nc_dt['ww00'], nc_dt['ww01'], nc_dt['ww11'], W_outer_d

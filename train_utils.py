@@ -111,7 +111,7 @@ class Train_Vars:
                 print('{} is not attribute of Graph var'.format(key))
 
 
-def get_theoretical_solution(train_loader, args, bias=None, all_labels=None):
+def get_theoretical_solution(train_loader, args, bias=None, all_labels=None, center=False):
     if all_labels is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         all_labels = []
@@ -123,6 +123,10 @@ def get_theoretical_solution(train_loader, args, bias=None, all_labels=None):
 
     if bias is not None:
         center_labels = all_labels - bias  # [N,2] - [2]
+    else:
+        center_labels = all_labels
+    if center:
+        center_labels = all_labels - torch.mean(all_labels, dim=0)
     else:
         center_labels = all_labels
     Sigma = torch.matmul(center_labels.T, center_labels)/len(center_labels)

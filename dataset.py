@@ -196,9 +196,13 @@ class MujocoBuffer(Dataset):
     def get_action_dim(self):
         return self.action_dim
 
-    def get_theory_stats(self):
-        Y = self.actions.T
-        Sigma = Y @ self.actions / Y.shape[1]
+    def get_theory_stats(self, center=False):
+        mu = np.mean(self.actions, axis=0)
+        if center:
+            centered_actions = self.actions - mu
+            Sigma = centered_actions.T @ centered_actions / centered_actions.shape[0]
+        else:
+            Sigma = self.actions.T @ self.actions / self.actions.shape[0]
 
         # Sigma_sqrt = sqrtm(Sigma)
         # eig_vals = np.linalg.eigvalsh(Sigma)
@@ -229,6 +233,8 @@ class MujocoBuffer(Dataset):
             'sigma12': Sigma_sqrt[0, 1],
             'sigma21': Sigma_sqrt[1, 0],
             'sigma22': Sigma_sqrt[1, 1],
+            'mu1': mu[0],
+            'mu2': mu[1]
         }
 
     def __len__(self):
