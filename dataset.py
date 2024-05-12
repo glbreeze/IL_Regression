@@ -17,21 +17,18 @@ def get_dataloader(args):
         train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=4, pin_memory=True, persistent_workers=True)
         val_loader = train_loader
     elif args.dataset == "swimmer" or args.dataset == 'reacher':
-        if args.dataset == 'swimmer':
-            DATA_RATIO = 0.1
-        else:
-            DATA_RATIO = 1.0
+
         train_dataset = MujocoBuffer(data_folder=DATA_FOLDER,
             env=args.dataset,
             split='train',
-            data_ratio=DATA_RATIO,
+            data_ratio=args.data_ratio,
             args=args
         )
         val_dataset = MujocoBuffer(
             data_folder=DATA_FOLDER,
             env=args.dataset,
             split='test',
-            data_ratio=DATA_RATIO,
+            data_ratio=args.data_ratio,
             args=args,
             y_shift=train_dataset.y_shift,
             div=train_dataset.div

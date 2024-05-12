@@ -126,8 +126,10 @@ def get_theoretical_solution(train_loader, args, bias=None, all_labels=None, cen
     else:
         center_labels = all_labels
     if center:
-        center_labels = all_labels - torch.mean(all_labels, dim=0)
+        mu = torch.mean(all_labels, dim=0)
+        center_labels = all_labels - mu
     else:
+        mu = torch.mean(all_labels, dim=0)
         center_labels = all_labels
     Sigma = torch.matmul(center_labels.T, center_labels)/len(center_labels)
     Sigma = Sigma.cpu().numpy()
@@ -135,6 +137,25 @@ def get_theoretical_solution(train_loader, args, bias=None, all_labels=None, cen
     eigenvalues, eigenvectors = np.linalg.eig(Sigma)
     sqrt_eigenvalues = np.sqrt(eigenvalues)
     Sigma_sqrt = eigenvectors @ np.diag(sqrt_eigenvalues) @ np.linalg.inv(eigenvectors)
+    min_eigval = eigenvalues[0]
+    max_eigval = eigenvalues[-1]
+    
+    mu11 = Sigma[0, 0]
+    mu12 = Sigma[0, 1]
+    mu22 = Sigma[1, 1]
 
     W_outer = args.lambda_H * (Sigma_sqrt/np.sqrt(args.lambda_H*args.lambda_W) - np.eye(args.num_y))
-    return W_outer, Sigma_sqrt, all_labels # all_labels is still tensor
+    theory_stat = {
+            'mu11': Sigma[0, 0],
+            'mu12': Sigma[0, 1],
+            'mu22': Sigma[1, 1],
+            'min_eigval': min_eigval,
+            'max_eigval': max_eigval,
+            'sigma11': Sigma_sqrt[0, 0],
+            'sigma12': Sigma_sqrt[0, 1],
+            'sigma21': Sigma_sqrt[1, 0],
+            'sigma22': Sigma_sqrt[1, 1],
+            'mu1': mu[0].item(),
+            'mu2': mu[1].item()
+        }
+    return W_outer, Sigma_sqrt, all_labels, theory_stat # all_labels is still tensor    

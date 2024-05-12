@@ -4,3 +4,4 @@ result
 tp.py
 __pycache__
 *.out
+wandb

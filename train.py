@@ -90,8 +90,9 @@ def main(args):
             print("=> no checkpoint found at '{}'".format(args.resume))
 
     # =================== theoretical solution ================
-    W_outer, Sigma_sqrt, all_labels = get_theoretical_solution(train_loader, args, bias=None, all_labels=None, center=args.bias)
-    theory_stat = train_loader.dataset.get_theory_stats(center=args.bias)
+    W_outer, Sigma_sqrt, all_labels, theory_stat = get_theoretical_solution(train_loader, args, bias=None, all_labels=None, center=args.bias)
+    if args.dataset in ['swimmer', 'reacher']: 
+        theory_stat = train_loader.dataset.get_theory_stats(center=args.bias)
 
     # ================== setup wandb  ==================
     args.s00 = Sigma_sqrt[0, 0]
@@ -186,7 +187,7 @@ def main(args):
                 "NC2(c)": wandb.plot.line(
                     table, "c", "NC2", title="NC2 as a Function of c"
                 )
-            }
+            }, step=epoch
         )
 
         slamH_to_plot = np.linspace(0.0001, min_eigval/np.sqrt(args.wd), num=1000)
@@ -199,29 +200,33 @@ def main(args):
 
         data = [[a, b, c] for (a, b, c) in zip(slamH_to_plot, NC2_to_plot, NC2_norm_to_plot)]
         table = wandb.Table(data=data, columns=["slamH", "NC2", "NC2_norm"])
+        # wandb.log(
+        #     {
+        #         "NC2(slamH)": wandb.plot.line(
+        #             table, "slamH", "NC2", title="NC2 as a Function of c and lamH"
+        #         )
+        #     }
+        # )
         wandb.log(
             {
                 "NC2(slamH)": wandb.plot.line(
-                    table, "slamH", "NC2", title="NC2 as a Function of c and lamH"
+                    table, "slamH", "NC2_norm", title="NC2 norm as a Function of slamH"
                 )
-            }
+            }, step=epoch
         )
-        wandb.log(
-            {
-                "NC2(slamH)": wandb.plot.line(
-                    table, "slamH", "NC2_norm", title="NC2 norm as a Function of c and lamH"
-                )
-            }
-        )
-        best_slamH = slamH[np.argmin(np.array(NC2_to_plot))]
+        best_slamH = slamH_to_plot[np.argmin(np.array(NC2_to_plot))]
         wandb.log({'slamH': best_slamH},step=epoch)
 
         # ===============compute val mse and projection error==================
-        feats, preds, labels = get_feat_pred(model, val_loader)
-        val_loss = criterion(preds, labels)
+        if args.dataset in ['swimmer', 'reacher']: 
+            feats, preds, labels = get_feat_pred(model, val_loader)
+            val_loss = criterion(preds, labels)
 
-        h_projected = torch.mm(feats, P_E)
-        projection_error_val = mse_loss(h_projected, feats).item()
+            h_projected = torch.mm(feats, P_E)
+            projection_error_val = mse_loss(h_projected, feats).item()
+        else: 
+            val_loss = 0 
+            projection_error_val = 0
 
         nc_dt = {'lr': optimizer.param_groups[0]['lr'],
                  'train_mse': train_loss,
@@ -272,6 +277,8 @@ def main(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Regression NC")
     parser.add_argument('--dataset', type=str, default='Carla')
+    parser.add_argument('--data_ratio', type=float, default=1.0)
+    
     parser.add_argument('--arch', type=str, default='resnet18')
     parser.add_argument('--y_norm', type=str, default='null')
 
