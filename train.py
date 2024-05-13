@@ -103,6 +103,8 @@ def main(args):
     os.environ["WANDB_MODE"] = "online"  # "dryrun"
     os.environ["WANDB_CACHE_DIR"] = "/scratch/lg154/sseg/.cache/wandb"
     os.environ["WANDB_CONFIG_DIR"] = "/scratch/lg154/sseg/.config/wandb"
+    os.environ["WANDB_ARTIFACT_DIR"] = "/scratch/lg154/sseg/wandb"
+    os.environ["WANDB_DATA_DIR"] = "/scratch/lg154/sseg/wandb/data"
     wandb.login(key='0c0abb4e8b5ce4ee1b1a4ef799edece5f15386ee')
     wandb.init(project='reg1_' + args.dataset,
                name=args.exp_name.split('/')[-1]
@@ -257,7 +259,7 @@ def main(args):
             epoch, args.max_epoch, train_loss, nc_dt['ww00'], nc_dt['ww01'], nc_dt['ww11'], W_outer_d
         ))
 
-        if epoch % args.save_freq == 0:
+        if epoch % args.save_freq == 0 and args.dataset == 'Carla':
             ckpt_path = os.path.join(args.save_dir, 'ep{}_ckpt.pth'.format(epoch))
             torch.save({
                 'epoch': epoch,

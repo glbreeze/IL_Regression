@@ -28,6 +28,14 @@ class RegressionResNet(nn.Module):
                 nn.BatchNorm1d(resnet_model.fc.in_features, affine=False), 
                 nn.Linear(resnet_model.fc.in_features, resnet_model.fc.in_features)
                 )
+        elif self.args.feat == 'fbg':
+            self.feat = nn.Sequential(
+                nn.AdaptiveAvgPool2d(output_size=(1, 1)),
+                nn.Flatten(),
+                nn.Linear(resnet_model.fc.in_features, resnet_model.fc.in_features),
+                nn.BatchNorm1d(resnet_model.fc.in_features, affine=True),
+                nn.GELU()
+            )
         elif self.args.feat == 'bft': 
             self.feat = nn.Sequential(
                 nn.AdaptiveAvgPool2d(output_size=(1, 1)),
