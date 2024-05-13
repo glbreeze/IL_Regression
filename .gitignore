@@ -5,3 +5,4 @@ tp.py
 __pycache__
 *.out
 wandb
+NC_regression

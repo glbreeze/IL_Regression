@@ -15,9 +15,10 @@ def get_dataloader(args):
     if args.dataset == 'Carla' or args.dataset == 'carla':
         train_dataset = SubDataset('/vast/lg154/Carla_JPG/Train/train_list.txt', '/vast/lg154/Carla_JPG/Train/sub_targets.pkl', transform=transform, dim=args.num_y)
         train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=4, pin_memory=True, persistent_workers=True)
-        val_loader = train_loader
-    elif args.dataset == "swimmer" or args.dataset == 'reacher':
+        val_dataset = SubDataset('/vast/lg154/Carla_JPG/Val/val_list.txt', '/vast/lg154/Carla_JPG/Val/sub_targets.pkl', transform=transform, dim=args.num_y)
+        val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=4, pin_memory=True, persistent_workers=True)
 
+    elif args.dataset == "swimmer" or args.dataset == 'reacher':
         train_dataset = MujocoBuffer(data_folder=DATA_FOLDER,
             env=args.dataset,
             split='train',
@@ -214,18 +215,12 @@ class MujocoBuffer(Dataset):
         mu12 = Sigma[0, 1]
         mu22 = Sigma[1, 1]
 
-        sqrt = np.sqrt((mu22 - mu11) ** 2 + 4 * mu12 ** 2)
-        gamma1 = (mu22 - mu11 + sqrt) / (2 * mu12)
-        gamma2 = (mu22 - mu11 - sqrt) / (2 * mu12)
-
         return {
             'mu11': Sigma[0, 0],
             'mu12': Sigma[0, 1],
             'mu22': Sigma[1, 1],
             'min_eigval': min_eigval,
             'max_eigval': max_eigval,
-            'gamma1': gamma1,
-            'gamma2': gamma2,
             'sigma11': Sigma_sqrt[0, 0],
             'sigma12': Sigma_sqrt[0, 1],
             'sigma21': Sigma_sqrt[1, 0],

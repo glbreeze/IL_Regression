@@ -2,6 +2,8 @@ import torch
 import os
 import numpy as np
 import torch.optim as optim
+import torch.nn.functional as F
+from sklearn.decomposition import PCA
 
 
 def get_scheduler(args, optimizer):
@@ -65,20 +67,78 @@ def gram_schmidt(W):
     return U
 
 
+# ============== NC metrics ==============
+def compute_metrics(W, H, split=None):
+    result = {}
+
+    # NC1
+    H_np = H.cpu().numpy()
+    pca_for_H = PCA(n_components=2)
+    try:
+        pca_for_H.fit(H_np)
+    except Exception as e:
+        print(e)
+        result['nc1'] = -1
+    else:
+        H_pca = pca_for_H.components_[:2, :]  # First two principal components [2,5]
+
+        try:
+            inverse_mat = np.linalg.inv(H_pca @ H_pca.T)
+        except Exception as e:
+            print(e)
+            result['nc1'] = -1
+        else:
+            P_H = H_pca.T @ inverse_mat @ H_pca
+            H_proj = (P_H @ H_np.T).T
+            result['nc1'] = np.sum((H_np - H_proj) ** 2) / H_np.shape[0]
+            del H_proj
+        del H_pca
+    del H_np
+    del pca_for_H
+
+    # NC3
+    try:
+        inverse_mat = torch.inverse(W @ W.T)
+    except Exception as e:
+        print(e)
+        result['nc3'] = -1
+    else:
+        H_proj_W = (W.T @ inverse_mat @ W @ H.T).T
+        result['nc3'] = F.mse_loss(H, H_proj_W).item()
+        del H_proj_W
+
+    # Projection error with Gram-Schmidt
+    U = gram_schmidt(W)
+    P_E = torch.mm(U.T, U)
+    H_proj = torch.mm(H, P_E)
+    # H_projected_E_norm = F.normalize(torch.tensor(H_projected_E).float().to(device), p=2, dim=1)
+    result['nc3a'] = F.mse_loss(H_proj, H).item()
+    del H_proj
+
+    return result
+
+
 class Graph_Vars:
     def __init__(self, dim=2):
         self.epoch = []
-        self.lr = []
 
         self.train_mse = []
-        self.train_proj_error = []
+        self.train_nc1 = []
+        self.train_nc3 = []
+        self.train_nc3a = []
+
         self.val_mse = []
-        self.val_proj_error = []
-        self.w_outer_d = []
+        self.val_nc1 = []
+        self.val_nc3 = []
+        self.val_nc3a = []
+
+        self.nc2 = []
+
         self.ww00 = []
         if dim==2:
             self.ww01 = []
             self.ww11 = []
+            self.w_cos = []
 
     def load_dt(self, nc_dt, epoch):
         self.epoch.append(epoch)

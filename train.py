@@ -9,11 +9,13 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 from torch.nn.functional import mse_loss
 from torch.optim.lr_scheduler import LambdaLR
+import torch.nn.functional as F
+from sklearn.decomposition import PCA
 
 
 from dataset import SubDataset, get_dataloader
 from model import RegressionResNet, MLP
-from train_utils import Graph_Vars, get_feat_pred, compute_cosine_norm, gram_schmidt, get_scheduler, Train_Vars, get_theoretical_solution
+from train_utils import Graph_Vars, get_feat_pred, gram_schmidt, get_scheduler, Train_Vars, get_theoretical_solution, compute_metrics
 from utils import print_model_param_nums, set_log_path, log, print_args
 
 
@@ -53,8 +55,6 @@ def main(args):
         args.num_x = train_loader.dataset.state_dim
         args.num_y = train_loader.dataset.action_dim
 
-    # val_dataset = ImageTargetDataset('/vast/zz4330/Carla_JPG/Val/images', '/vast/zz4330/Carla_JPG/Val/targets', transform=transform, dim=args.num_y)
-    # val_data_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=4, pin_memory=True, persistent_workers=True)
     if args.arch.startswith('res'):
         model = RegressionResNet(pretrained=True, num_outputs=args.num_y, args=args).to(device)
     elif args.arch.startswith('mlp'):
@@ -134,34 +134,34 @@ def main(args):
 
         # === cosine between Wi's
         W = model.fc.weight.data  # [2, 512]
-        W_outer_pred = torch.matmul(W, W.T).cpu().numpy()
-        W_outer_d = np.sum(abs(W_outer - W_outer_pred))
-  
+        WWT = (W @ W.T).cpu().numpy()
+
         # ==== calculate training feature with updated W
-        if True:
-            all_feats, preds, labels = get_feat_pred(model, train_loader)
-            train_loss = criterion(preds, labels)
+        all_feats, preds, labels = get_feat_pred(model, train_loader)
+        train_loss = criterion(preds, labels)
+        nc_train = compute_metrics(W, all_feats)
 
-        # === compute projection error
-        U = gram_schmidt(W)
-        P_E = torch.mm(U.T, U)  # Projection matrix using orthonormal basis
-        h_projected = torch.mm(all_feats, P_E)
-        projection_error_train = mse_loss(h_projected, all_feats).item()
+        # ===============compute val mse and projection error==================
+        all_feats, preds, labels = get_feat_pred(model, val_loader)
+        val_loss = criterion(preds, labels)
+        nc_val = compute_metrics(W, all_feats)
 
-        # === compute theoretical value for WW^T with updated bias
-        if args.bias and args.ufm:
-            W_outer_new, _, _ = get_theoretical_solution(train_loader, args, all_labels=labels, bias=model.fc.bias.data)
-            W_outer_d = np.sum(abs(W_outer_new - W_outer_pred))
-            wandb.log(
-                {'W/ww00_th1': W_outer_new[0,0],
-                 'W/ww01_th1': W_outer_new[0,1],
-                 'W/ww11_th1': W_outer_new[1,1], 
-                 'W/b0': model.fc.bias[0].item(), 
-                 'W/b1': model.fc.bias[1].item(),
-                 },
-                step=epoch)
+        nc_dt = {
+            'ww00': WWT[0, 0].item(),
+            'ww01': WWT[0, 1].item(),
+            'ww11': WWT[1, 1].item(),
+            'w_cos': F.cosine_similarity(W[0], W[1], dim=0).item(),
+            'train_mse': train_loss,
+            'train_nc1': nc_train['nc1'],
+            'train_nc3': nc_train['nc3'],
+            'train_nc3a': nc_train['nc3a'],
+            'val_mse': val_loss,
+            'val_nc1': nc_val['nc1'],
+            'val_nc3': nc_val['nc3'],
+            'val_nc3a': nc_val['nc3a'],
+        }
+
         # ================ NC2 ================
-        WWT = W_outer_pred
         WWT_normalized = WWT / np.linalg.norm(WWT)
         min_eigval = theory_stat['min_eigval']
         Sigma_sqrt = np.array([theory_stat[k] for k in ['sigma11', 'sigma12', 'sigma21', 'sigma22']]).reshape(2, 2)
@@ -192,71 +192,31 @@ def main(args):
             }, step=epoch
         )
 
-        slamH_to_plot = np.linspace(0.0001, min_eigval/np.sqrt(args.wd), num=1000)
-        NC2_to_plot = []
-        NC2_norm_to_plot = []
-        for slamH in slamH_to_plot:
-            A = slamH * Sigma_sqrt / (args.wd ** 0.5) - (slamH ** 2) * np.eye(2)
-            NC2_to_plot.append(np.linalg.norm(WWT - A))
-            NC2_norm_to_plot.append(np.linalg.norm(WWT_normalized - A / np.maximum(np.linalg.norm(A), 1e-6)))
-
-        data = [[a, b, c] for (a, b, c) in zip(slamH_to_plot, NC2_to_plot, NC2_norm_to_plot)]
-        table = wandb.Table(data=data, columns=["slamH", "NC2", "NC2_norm"])
-        # wandb.log(
-        #     {
-        #         "NC2(slamH)": wandb.plot.line(
-        #             table, "slamH", "NC2", title="NC2 as a Function of c and lamH"
-        #         )
-        #     }
-        # )
-        wandb.log(
-            {
-                "NC2(slamH)": wandb.plot.line(
-                    table, "slamH", "NC2_norm", title="NC2 norm as a Function of slamH"
-                )
-            }, step=epoch
-        )
-        best_slamH = slamH_to_plot[np.argmin(np.array(NC2_to_plot))]
-        wandb.log({'slamH': best_slamH},step=epoch)
-
-        # ===============compute val mse and projection error==================
-        if args.dataset in ['swimmer', 'reacher']: 
-            feats, preds, labels = get_feat_pred(model, val_loader)
-            val_loss = criterion(preds, labels)
-
-            h_projected = torch.mm(feats, P_E)
-            projection_error_val = mse_loss(h_projected, feats).item()
-        else: 
-            val_loss = 0 
-            projection_error_val = 0
-
-        nc_dt = {'lr': optimizer.param_groups[0]['lr'],
-                 'train_mse': train_loss,
-                 'train_proj_error': projection_error_train,
-                 'val_mse': val_loss,
-                 'val_proj_error': projection_error_val,
-                 'ww00': W_outer_pred[0, 0],
-                 'ww01': W_outer_pred[0, 1],
-                 'ww11': W_outer_pred[1, 1],
-                 'w_outer_d': W_outer_d}
+        nc_dt['nc2'] = min(NC2_to_plot)
         nc_tracker.load_dt(nc_dt, epoch=epoch)
 
         wandb.log(
             {'train/lr': optimizer.param_groups[0]['lr'],
              'train/train_mse': train_loss,
-             'train/project_error': projection_error_train,
+             'train/train_nc1': nc_dt['train_nc1'],
+             'train/train_nc3': nc_dt['train_nc3'],
+             'train/train_nc3a': nc_dt['train_nc3a'],
+
              'val/val_mse': val_loss,
-             'val/project_error': projection_error_val,
+             'val/val_nc1': nc_dt['val_nc1'],
+             'val/val_nc3': nc_dt['val_nc3'],
+             'val/val_nc3a': nc_dt['val_nc3a'],
+
              'W/ww00': nc_dt['ww00'],
              'W/ww01': nc_dt['ww01'],
              'W/ww11': nc_dt['ww11'],
-             'W/W_outer_d': W_outer_d,
+             'W/w_cos': nc_dt['w_cos'],
+             'W/nc2': nc_dt['nc2']
              },
             step=epoch)
 
-
-        log('Epoch {}/{}, runnning train mse: {:.4f}, ww00: {:.4f}, ww01: {:.4f}, ww11: {:.4f}, W_outer_d: {:.4f}'.format(
-            epoch, args.max_epoch, train_loss, nc_dt['ww00'], nc_dt['ww01'], nc_dt['ww11'], W_outer_d
+        log('Epoch {}/{}, runnning train mse: {:.4f}, ww00: {:.4f}, ww01: {:.4f}, ww11: {:.4f}'.format(
+            epoch, args.max_epoch, train_loss, nc_dt['ww00'], nc_dt['ww01'], nc_dt['ww11']
         ))
 
         if epoch % args.save_freq == 0 and args.dataset == 'Carla':
