@@ -171,13 +171,16 @@ class MujocoBuffer(Dataset):
         return torch.tensor(data, dtype=torch.float32)
 
     # Loads data in d4rl format, i.e. from Dict[str, np.array].
-    def _load_dataset(self, data_folder: str, env: str, split: str, data_ratio: float):
+    def _load_dataset(self, data_folder, env, split, data_ratio):
         file_name = '%s_%s.pkl' % (env, split)
         file_path = os.path.join(data_folder, file_name)
         try:
             with open(file_path, 'rb') as file:
                 dataset = pickle.load(file)
-                self.size = int(dataset['observations'].shape[0] * data_ratio)
+                if data_ratio <= 1: 
+                    self.size = int(dataset['observations'].shape[0] * data_ratio)
+                else: 
+                    self.size = int(data_ratio) if data_ratio<= dataset['observations'].shape[0] else dataset['observations'].shape[0]
                 self.states = dataset['observations'][:self.size, :]
                 self.actions = dataset['actions'][:self.size, :]
             print('Successfully load dataset from: ', file_path)

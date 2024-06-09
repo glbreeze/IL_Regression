@@ -116,22 +116,16 @@ def main(args):
     with open(filename, 'wb') as f:
         pickle.dump({'target':all_labels.cpu().numpy(), 'W_outer':W_outer, 'lambda_H':args.lambda_H, 'lambda_W':args.lambda_W}, f)
         log('--store theoretical result to {}'.format(filename))
-        log('====> Theoretical s00: {:.5f}, s01: {:.5f}, s11: {:.5f}'.format(Sigma_sqrt[0, 0], Sigma_sqrt[0, 1], Sigma_sqrt[1, 1]))
-        log('====> Theoretical ww00: {:.4f}, ww01: {:.4f}, ww11: {:.4f}'.format(W_outer[0, 0], W_outer[0, 1], W_outer[1, 1]))
-        log(', '.join([f'{key}: {round(value,4)}' for key, value in theory_stat.items()]))
+    log('====> Theoretical s00: {:.5f}, s01: {:.5f}, s11: {:.5f}'.format(Sigma_sqrt[0, 0], Sigma_sqrt[0, 1], Sigma_sqrt[1, 1]))
+    log('====> Theoretical ww00: {:.4f}, ww01: {:.4f}, ww11: {:.4f}'.format(W_outer[0, 0], W_outer[0, 1], W_outer[1, 1]))
+    log(', '.join([f'{key}: {round(value,4)}' for key, value in theory_stat.items()]))
 
     # ================== Training ==================
     criterion = nn.MSELoss()
     nc_tracker = Graph_Vars(dim=args.num_y)
     wandb.watch(model, criterion, log="all", log_freq=10)
     for epoch in range(args.start_epoch, args.max_epoch):
-            
-        all_feats, train_loss = train_one_epoch(model, train_loader, optimizer, criterion, args=args)
-        if epoch < args.warmup:
-            warmup_scheduler.step()
-        else:
-            scheduler.step()
-
+        
         # === cosine between Wi's
         W = model.fc.weight.data  # [2, 512]
         WWT = (W @ W.T).cpu().numpy()
@@ -159,6 +153,7 @@ def main(args):
             'val_nc1': nc_val['nc1'],
             'val_nc3': nc_val['nc3'],
             'val_nc3a': nc_val['nc3a'],
+            'h_norm': torch.norm(all_feats, p=2, dim=1).mean().item()
         }
 
         # ================ NC2 ================
@@ -211,7 +206,14 @@ def main(args):
              'W/ww01': nc_dt['ww01'],
              'W/ww11': nc_dt['ww11'],
              'W/w_cos': nc_dt['w_cos'],
-             'W/nc2': nc_dt['nc2']
+             'W/nc2': nc_dt['nc2'],
+             'W/h_norm': nc_dt['h_norm'],
+             
+             'NC2/ww00_d': abs(nc_dt['ww00'] - W_outer[0, 0])/(abs(W_outer[0, 0])+1e-8),
+             'NC2/ww01_d': abs(nc_dt['ww01'] - W_outer[0, 1])/(abs(W_outer[0, 1])+1e-8),
+             'NC2/ww11_d': abs(nc_dt['ww11'] - W_outer[1, 1])/(abs(W_outer[1, 1])+1e-8),
+             'NC2/ww_d': np.sum( (WWT/np.linalg.norm(WWT) -W_outer/np.linalg.norm(W_outer))**2 ),
+             'NC2/ww_d1': np.sum( ((WWT -W_outer)/np.linalg.norm(W_outer))**2 )
              },
             step=epoch)
 
@@ -219,7 +221,7 @@ def main(args):
             epoch, args.max_epoch, train_loss, nc_dt['ww00'], nc_dt['ww01'], nc_dt['ww11']
         ))
 
-        if epoch % args.save_freq == 0 and args.dataset == 'Carla':
+        if epoch % args.save_freq == 0:
             ckpt_path = os.path.join(args.save_dir, 'ep{}_ckpt.pth'.format(epoch))
             torch.save({
                 'epoch': epoch,
@@ -230,10 +232,17 @@ def main(args):
 
             log('--save model to {}'.format(ckpt_path))
         
-        if epoch % (args.save_freq*10) == 0:
+        if (epoch+1) % (args.save_freq*10) == 0:
             filename = os.path.join(args.save_dir, 'train_nc{}.pkl'.format(epoch))
             with open(filename, 'wb') as f:
                 pickle.dump(nc_tracker, f)
+            
+        all_feats, train_loss = train_one_epoch(model, train_loader, optimizer, criterion, args=args)
+        if epoch < args.warmup:
+            warmup_scheduler.step()
+        else:
+            scheduler.step()
+
 
 
 if __name__ == '__main__':

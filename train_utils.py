@@ -92,11 +92,7 @@ def compute_metrics(W, H, split=None):
             H_proj = (P_H @ H_np.T).T
             result['nc1'] = np.sum((H_np - H_proj) ** 2) / H_np.shape[0]
             del H_proj
-        del H_pca
-    del H_np
-    del pca_for_H
 
-    # NC3
     try:
         inverse_mat = torch.inverse(W @ W.T)
     except Exception as e:
@@ -104,15 +100,20 @@ def compute_metrics(W, H, split=None):
         result['nc3'] = -1
     else:
         H_proj_W = (W.T @ inverse_mat @ W @ H.T).T
-        result['nc3'] = F.mse_loss(H, H_proj_W).item()
+        result['nc3'] = torch.sum((H-H_proj_W)**2).item() / len(H)
         del H_proj_W
+
+
+        del H_pca
+    del H_np
+    del pca_for_H
 
     # Projection error with Gram-Schmidt
     U = gram_schmidt(W)
     P_E = torch.mm(U.T, U)
     H_proj = torch.mm(H, P_E)
     # H_projected_E_norm = F.normalize(torch.tensor(H_projected_E).float().to(device), p=2, dim=1)
-    result['nc3a'] = F.mse_loss(H_proj, H).item()
+    result['nc3a'] = torch.sum((H_proj-H)**2).item() / len(H)
     del H_proj
 
     return result
@@ -133,6 +134,7 @@ class Graph_Vars:
         self.val_nc3a = []
 
         self.nc2 = []
+        self.h_norm=[]
 
         self.ww00 = []
         if dim==2:

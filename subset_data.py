@@ -4,7 +4,7 @@ import random
 import pickle
 import numpy as np 
 
-mode = 'Val'
+mode = 'Train'
 if mode == 'Train': 
     N = 50000
 else: 
