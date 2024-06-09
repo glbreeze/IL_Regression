@@ -201,14 +201,10 @@ def get_theoretical_solution(train_loader, args, bias=None, all_labels=None, cen
     Sigma_sqrt = eigenvectors @ np.diag(sqrt_eigenvalues) @ np.linalg.inv(eigenvectors)
     min_eigval = eigenvalues[0]
     max_eigval = eigenvalues[-1]
-    
-    mu11 = Sigma[0, 0]
-    mu12 = Sigma[0, 1]
-    mu22 = Sigma[1, 1]
 
     W_outer = args.lambda_H * (Sigma_sqrt/np.sqrt(args.lambda_H*args.lambda_W) - np.eye(args.num_y))
     theory_stat = {
-            'mu11': Sigma[0, 0],
+            'mu11': Sigma[0, 0],  # covariance matrix
             'mu12': Sigma[0, 1],
             'mu22': Sigma[1, 1],
             'min_eigval': min_eigval,
@@ -220,4 +216,4 @@ def get_theoretical_solution(train_loader, args, bias=None, all_labels=None, cen
             'mu1': mu[0].item(),
             'mu2': mu[1].item()
         }
-    return W_outer, Sigma_sqrt, all_labels, theory_stat # all_labels is still tensor    
+    return W_outer, Sigma_sqrt, all_labels, theory_stat  # all_labels is still tensor

@@ -205,18 +205,12 @@ class MujocoBuffer(Dataset):
         else:
             Sigma = self.actions.T @ self.actions / self.actions.shape[0]
 
-        # Sigma_sqrt = sqrtm(Sigma)
-        # eig_vals = np.linalg.eigvalsh(Sigma)
         eig_vals, eig_vecs = np.linalg.eigh(Sigma)
         sqrt_eig_vals = np.sqrt(eig_vals)
         Sigma_sqrt = eig_vecs.dot(np.diag(sqrt_eig_vals)).dot(np.linalg.inv(eig_vecs))
 
         min_eigval = eig_vals[0]
         max_eigval = eig_vals[-1]
-
-        mu11 = Sigma[0, 0]
-        mu12 = Sigma[0, 1]
-        mu22 = Sigma[1, 1]
 
         return {
             'mu11': Sigma[0, 0],
