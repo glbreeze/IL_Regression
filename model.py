@@ -93,7 +93,12 @@ class MLP(nn.Module):
             hidden_size = int(hidden_size)
             module_list.append(nn.Linear(in_dim, hidden_size))
             module_list.append(nn.BatchNorm1d(hidden_size))
-            module_list.append(nn.ReLU())
+            if args.act == 'elu': 
+                module_list.append(nn.ELU())
+            elif args.act == 'lrelu': 
+                module_list.append(nn.LeakyReLU(0.1))
+            else: 
+                module_list.append(nn.ReLU())
             in_dim = hidden_size
         self.backbone = nn.Sequential(*module_list)
 

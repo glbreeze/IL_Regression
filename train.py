@@ -186,7 +186,7 @@ def main(args):
                 )
             }, step=epoch
         )
-
+        best_c = c_to_plot[np.argmin(NC2_to_plot)]
         nc_dt['nc2'] = min(NC2_to_plot)
         nc_tracker.load_dt(nc_dt, epoch=epoch)
 
@@ -207,6 +207,7 @@ def main(args):
              'W/ww11': nc_dt['ww11'],
              'W/w_cos': nc_dt['w_cos'],
              'W/nc2': nc_dt['nc2'],
+             'W/best_c': best_c, 
              'W/h_norm': nc_dt['h_norm'],
              
              'NC2/ww00_d': abs(nc_dt['ww00'] - W_outer[0, 0])/(abs(W_outer[0, 0])+1e-8),
@@ -252,6 +253,8 @@ if __name__ == '__main__':
     
     parser.add_argument('--arch', type=str, default='resnet18')
     parser.add_argument('--y_norm', type=str, default='null')
+    parser.add_argument('--act', type=str, default='relu')
+    
 
     parser.add_argument('--max_epoch', type=int, default=1000)
     parser.add_argument('--batch_size', type=int, default=64)
