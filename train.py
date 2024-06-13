@@ -55,10 +55,33 @@ def main(args):
         args.num_x = train_loader.dataset.state_dim
         args.num_y = train_loader.dataset.action_dim
 
+    # =================== theoretical solution ================
+    W_outer, mu, Sigma_sqrt, all_labels, theory_stat = get_theoretical_solution(train_loader, args, bias=None,
+                                                                                all_labels=None, center=args.bias)
+    if args.dataset in ['swimmer', 'reacher']:
+        theory_stat = train_loader.dataset.get_theory_stats(center=args.bias)
+
+    # ===================    Load model   ===================
     if args.arch.startswith('res'):
         model = RegressionResNet(pretrained=True, num_outputs=args.num_y, args=args).to(device)
     elif args.arch.startswith('mlp'):
         model = MLP(in_dim=args.num_x, out_dim=args.num_y, args=args, arch=args.arch.replace('mlp',''))
+
+    if args.w == 'n' or args.w == 'null':
+        pass
+    elif args.w == 'e':
+        if args.bias:
+            model.fc.bias = nn.Parameter(torch.tensor(mu))
+            model.fc.bias.requires_grad_(False)
+
+        eigenvalues, eigenvectors = np.linalg.eig(Sigma_sqrt)
+        A_sqrt = eigenvectors @ np.diag(np.sqrt(eigenvalues)) @ eigenvectors.T
+        if args.w == 'e':
+            model.fc.weight = nn.Parameter(
+                torch.tensor(A_sqrt @ np.eye(model.fc.weight.shape[0], model.fc.weight.shape[1]))
+            )
+            model.fc.weight.require_grad_(False)
+
     _ = print_model_param_nums(model=model)
     if torch.cuda.is_available():
         model = model.cuda()
@@ -89,11 +112,6 @@ def main(args):
         else:
             print("=> no checkpoint found at '{}'".format(args.resume))
 
-    # =================== theoretical solution ================
-    W_outer, Sigma_sqrt, all_labels, theory_stat = get_theoretical_solution(train_loader, args, bias=None, all_labels=None, center=args.bias)
-    if args.dataset in ['swimmer', 'reacher']: 
-        theory_stat = train_loader.dataset.get_theory_stats(center=args.bias)
-
     # ================== setup wandb  ==================
     args.s00 = Sigma_sqrt[0, 0]
     args.s01 = Sigma_sqrt[0, 1]
@@ -118,7 +136,7 @@ def main(args):
         log('--store theoretical result to {}'.format(filename))
     log('====> Theoretical s00: {:.5f}, s01: {:.5f}, s11: {:.5f}'.format(Sigma_sqrt[0, 0], Sigma_sqrt[0, 1], Sigma_sqrt[1, 1]))
     log('====> Theoretical ww00: {:.4f}, ww01: {:.4f}, ww11: {:.4f}'.format(W_outer[0, 0], W_outer[0, 1], W_outer[1, 1]))
-    log(', '.join([f'{key}: {round(value,4)}' for key, value in theory_stat.items()]))
+    log(', '.join([ f'{key}: {value:.4f}' for key, value in theory_stat.items() if key not in ['mu', 'Sigma_sqrt'] ]))
 
     # ================== Training ==================
     criterion = nn.MSELoss()
@@ -254,6 +272,7 @@ if __name__ == '__main__':
     parser.add_argument('--arch', type=str, default='resnet18')
     parser.add_argument('--y_norm', type=str, default='null')
     parser.add_argument('--act', type=str, default='relu')
+    parser.add_argument('--w', type=str, default='null')
     
 
     parser.add_argument('--max_epoch', type=int, default=1000)

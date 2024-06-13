@@ -216,4 +216,4 @@ def get_theoretical_solution(train_loader, args, bias=None, all_labels=None, cen
             'mu1': mu[0].item(),
             'mu2': mu[1].item()
         }
-    return W_outer, Sigma_sqrt, all_labels, theory_stat  # all_labels is still tensor
+    return W_outer, mu.cpu().numpy(), Sigma_sqrt, all_labels, theory_stat  # all_labels is still tensor

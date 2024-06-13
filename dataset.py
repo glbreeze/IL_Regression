@@ -207,7 +207,7 @@ class MujocoBuffer(Dataset):
 
         eig_vals, eig_vecs = np.linalg.eigh(Sigma)
         sqrt_eig_vals = np.sqrt(eig_vals)
-        Sigma_sqrt = eig_vecs.dot(np.diag(sqrt_eig_vals)).dot(np.linalg.inv(eig_vecs))
+        Sigma_sqrt = eig_vecs @ np.diag(sqrt_eig_vals) @ np.linalg.inv(eig_vecs)
 
         min_eigval = eig_vals[0]
         max_eigval = eig_vals[-1]
@@ -223,7 +223,9 @@ class MujocoBuffer(Dataset):
             'sigma21': Sigma_sqrt[1, 0],
             'sigma22': Sigma_sqrt[1, 1],
             'mu1': mu[0],
-            'mu2': mu[1]
+            'mu2': mu[1],
+            'mu': mu,
+            'Sigma_sqrt': Sigma_sqrt
         }
 
     def __len__(self):
