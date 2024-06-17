@@ -184,11 +184,15 @@ class MujocoBuffer(Dataset):
                 self.states = dataset['observations'][:self.size, :]
                 self.actions = dataset['actions'][:self.size, :]
             print('Successfully load dataset from: ', file_path)
+            if self.args.which_y == -1:
+                pass
+            elif self.args.which_y >= 0:
+                self.actions = self.actions[:, self.args.which_y]
         except Exception as e:
             print(e)
 
         self.state_dim = self.states.shape[1]
-        self.action_dim = self.actions.shape[1]
+        self.action_dim = 1 if self.actions.ndim == 1 else self.actions.shape[1]
         print(f"Dataset size: {self.size}; State Dim: {self.state_dim}; Action_Dim: {self.action_dim}.")
 
     def get_state_dim(self):
@@ -198,10 +202,7 @@ class MujocoBuffer(Dataset):
         return self.action_dim
 
     def get_theory_stats(self, center=False):
-        if self.args.which_y == -1: 
-            actions = self.actions
-        elif self.args.which_y >= 0: 
-            actions = self.actions[:, self.args.which_y]
+        actions = self.actions
         mu = np.mean(actions, axis=0)
         if center:
             centered_actions = actions - mu
@@ -231,10 +232,7 @@ class MujocoBuffer(Dataset):
 
     def __getitem__(self, idx):
         states = self.states[idx]
-        if self.args.which_y == -1: 
-            actions = self.actions[idx]
-        elif self.args.which_y >= 0: 
-            actions = self.actions[idx, self.args.which_y]
+        actions = self.actions[idx]
         return {
             'input': self._to_tensor(states),
             'target': self._to_tensor(actions)

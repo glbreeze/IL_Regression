@@ -40,6 +40,8 @@ def train_one_epoch(model, data_loader, optimizer, criterion, args):
         loss.backward()
         optimizer.step()
 
+        print(loss.item())
+
         running_loss += loss.item()
         running_train_loss = running_loss / len(data_loader)
 
@@ -152,7 +154,7 @@ def main(args):
         W = model.fc.weight.data  # [2, 512]
         WWT = (W @ W.T).cpu().numpy()
 
-        # ==== calculate training feature with updated W
+        # ===============compute train mse and projection error==================
         all_feats, preds, labels = get_feat_pred(model, train_loader)
         if labels.shape[-1] == 2:
             train_loss0 = torch.sum((preds[:,0] - labels[:,0])**2)/preds.shape[0]
@@ -266,12 +268,8 @@ def main(args):
             }, ckpt_path)
 
             log('--save model to {}'.format(ckpt_path))
-        
-        # if (epoch+1) % (args.save_freq*10) == 0:
-        #     filename = os.path.join(args.save_dir, 'train_nc{}.pkl'.format(epoch))
-        #     with open(filename, 'wb') as f:
-        #         pickle.dump(nc_tracker, f)
-            
+
+        # =============== train model ==================
         all_feats, train_loss = train_one_epoch(model, train_loader, optimizer, criterion, args=args)
         if epoch < args.warmup:
             warmup_scheduler.step()
