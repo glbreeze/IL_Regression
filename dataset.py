@@ -198,34 +198,32 @@ class MujocoBuffer(Dataset):
         return self.action_dim
 
     def get_theory_stats(self, center=False):
-        mu = np.mean(self.actions, axis=0)
+        if self.args.which_y == -1: 
+            actions = self.actions
+        elif self.args.which_y >= 0: 
+            actions = self.actions[:, self.args.which_y]
+        mu = np.mean(actions, axis=0)
         if center:
-            centered_actions = self.actions - mu
+            centered_actions = actions - mu
             Sigma = centered_actions.T @ centered_actions / centered_actions.shape[0]
         else:
-            Sigma = self.actions.T @ self.actions / self.actions.shape[0]
+            Sigma = actions.T @ actions / actions.shape[0]
 
-        eig_vals, eig_vecs = np.linalg.eigh(Sigma)
-        sqrt_eig_vals = np.sqrt(eig_vals)
-        Sigma_sqrt = eig_vecs @ np.diag(sqrt_eig_vals) @ np.linalg.inv(eig_vecs)
-
-        min_eigval = eig_vals[0]
-        max_eigval = eig_vals[-1]
+        if self.args.which_y == -1: 
+            eig_vals, eig_vecs = np.linalg.eigh(Sigma)
+            sqrt_eig_vals = np.sqrt(eig_vals)
+            Sigma_sqrt = eig_vecs @ np.diag(sqrt_eig_vals) @ np.linalg.inv(eig_vecs)
+            min_eigval, max_eigval = eig_vals[0], eig_vals[-1]
+        else: 
+            Sigma_sqrt = np.sqrt(Sigma)
+            min_eigval, max_eigval = Sigma_sqrt, Sigma_sqrt
 
         return {
-            'mu11': Sigma[0, 0],
-            'mu12': Sigma[0, 1],
-            'mu22': Sigma[1, 1],
+            'mu': mu, 
+            'Sigma': Sigma, 
+            'Sigma_sqrt': Sigma_sqrt,
             'min_eigval': min_eigval,
             'max_eigval': max_eigval,
-            'sigma11': Sigma_sqrt[0, 0],
-            'sigma12': Sigma_sqrt[0, 1],
-            'sigma21': Sigma_sqrt[1, 0],
-            'sigma22': Sigma_sqrt[1, 1],
-            'mu1': mu[0],
-            'mu2': mu[1],
-            'mu': mu,
-            'Sigma_sqrt': Sigma_sqrt
         }
 
     def __len__(self):
@@ -233,7 +231,10 @@ class MujocoBuffer(Dataset):
 
     def __getitem__(self, idx):
         states = self.states[idx]
-        actions = self.actions[idx]
+        if self.args.which_y == -1: 
+            actions = self.actions[idx]
+        elif self.args.which_y >= 0: 
+            actions = self.actions[idx, self.args.which_y]
         return {
             'input': self._to_tensor(states),
             'target': self._to_tensor(actions)

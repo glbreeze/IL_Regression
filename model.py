@@ -92,7 +92,10 @@ class MLP(nn.Module):
         for i, hidden_size in enumerate(arch.split('_')):
             hidden_size = int(hidden_size)
             module_list.append(nn.Linear(in_dim, hidden_size))
-            module_list.append(nn.BatchNorm1d(hidden_size))
+            if args.bn == 't':
+                module_list.append(nn.BatchNorm1d(hidden_size, affine=False))
+            elif args.bn == 'p': 
+                module_list.append(nn.BatchNorm1d(hidden_size, affine=True))
             if args.act == 'elu': 
                 module_list.append(nn.ELU())
             elif args.act == 'lrelu': 

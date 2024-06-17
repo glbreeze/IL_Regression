@@ -53,7 +53,10 @@ def main(args):
     train_loader, val_loader = get_dataloader(args)
     if args.dataset == 'swimmer' or args.dataset == 'reacher':
         args.num_x = train_loader.dataset.state_dim
-        args.num_y = train_loader.dataset.action_dim
+        if args.which_y == -1: 
+            args.num_y = train_loader.dataset.action_dim
+        else:
+            args.num_y = 1
 
     # =================== theoretical solution ================
     W_outer, mu, Sigma_sqrt, all_labels, theory_stat = get_theoretical_solution(train_loader, args, bias=None,
@@ -78,9 +81,9 @@ def main(args):
         A_sqrt = eigenvectors @ np.diag(np.sqrt(eigenvalues)) @ eigenvectors.T
         if args.w == 'e':
             model.fc.weight = nn.Parameter(
-                torch.tensor(A_sqrt @ np.eye(model.fc.weight.shape[0], model.fc.weight.shape[1]))
+                torch.tensor(A_sqrt @ np.eye(model.fc.weight.shape[0], model.fc.weight.shape[1]), dtype=torch.float32)
             )
-            model.fc.weight.require_grad_(False)
+            model.fc.weight.requires_grad_(False)
 
     _ = print_model_param_nums(model=model)
     if torch.cuda.is_available():
@@ -113,9 +116,6 @@ def main(args):
             print("=> no checkpoint found at '{}'".format(args.resume))
 
     # ================== setup wandb  ==================
-    args.s00 = Sigma_sqrt[0, 0]
-    args.s01 = Sigma_sqrt[0, 1]
-    args.s11 = Sigma_sqrt[1, 1]
 
     os.environ["WANDB_API_KEY"] = "0c0abb4e8b5ce4ee1b1a4ef799edece5f15386ee"
     os.environ["WANDB_MODE"] = "online"  # "dryrun"
@@ -124,19 +124,23 @@ def main(args):
     os.environ["WANDB_ARTIFACT_DIR"] = "/scratch/lg154/sseg/wandb"
     os.environ["WANDB_DATA_DIR"] = "/scratch/lg154/sseg/wandb/data"
     wandb.login(key='0c0abb4e8b5ce4ee1b1a4ef799edece5f15386ee')
-    wandb.init(project='reg1_' + args.dataset,
+    wandb.init(project='gl_' + args.dataset,
                name=args.exp_name.split('/')[-1]
                )
     wandb.config.update(args)
 
     # ================== log the theoretical result  ==================
-    filename = os.path.join(args.save_dir, 'theory.pkl')
-    with open(filename, 'wb') as f:
-        pickle.dump({'target':all_labels.cpu().numpy(), 'W_outer':W_outer, 'lambda_H':args.lambda_H, 'lambda_W':args.lambda_W}, f)
-        log('--store theoretical result to {}'.format(filename))
-    log('====> Theoretical s00: {:.5f}, s01: {:.5f}, s11: {:.5f}'.format(Sigma_sqrt[0, 0], Sigma_sqrt[0, 1], Sigma_sqrt[1, 1]))
-    log('====> Theoretical ww00: {:.4f}, ww01: {:.4f}, ww11: {:.4f}'.format(W_outer[0, 0], W_outer[0, 1], W_outer[1, 1]))
-    log(', '.join([ f'{key}: {value:.4f}' for key, value in theory_stat.items() if key not in ['mu', 'Sigma_sqrt'] ]))
+    if False: 
+        filename = os.path.join(args.save_dir, 'theory.pkl')
+        with open(filename, 'wb') as f:
+            pickle.dump({'target':all_labels.cpu().numpy(), 'W_outer':W_outer, 'lambda_H':args.lambda_H, 'lambda_W':args.lambda_W}, f)
+            log('--store theoretical result to {}'.format(filename))
+    log('====> Theoretical Sigma_sqrt:' + ' '.join(f'{value:.4f}' for value in Sigma_sqrt.flatten()))
+    log('====> Theoretical WWT:' + ' '.join(f'{value:.4f}' for value in W_outer.flatten()))
+    log('----> Theoretical mu:' + ' '.join(f'{value:.4f}' for value in theory_stat['mu'].flatten())
+        + ';\t' + 'Sigma:' + ' '.join(f'{value:.4f}' for value in theory_stat['Sigma'].flatten())
+        + ';\t' + 'Sigma_sqrt:' + ' '.join(f'{value:.4f}' for value in theory_stat['Sigma_sqrt'].flatten())
+        )
 
     # ================== Training ==================
     criterion = nn.MSELoss()
@@ -150,19 +154,32 @@ def main(args):
 
         # ==== calculate training feature with updated W
         all_feats, preds, labels = get_feat_pred(model, train_loader)
-        train_loss = criterion(preds, labels)
+        if labels.shape[-1] == 2:
+            train_loss0 = torch.sum((preds[:,0] - labels[:,0])**2)/preds.shape[0]
+            train_loss1 = torch.sum((preds[:,1] - labels[:,1])**2)/preds.shape[0]
+            train_loss = criterion(preds, labels)
+        else: 
+            train_loss = torch.sum((preds-labels)**2)/len(preds)
         nc_train = compute_metrics(W, all_feats)
+        train_hnorm = torch.norm(all_feats, p=2, dim=1).mean().item()
 
         # ===============compute val mse and projection error==================
         all_feats, preds, labels = get_feat_pred(model, val_loader)
-        val_loss = criterion(preds, labels)
+        if labels.shape[-1] == 2: 
+            val_loss0 = torch.sum((preds[:,0] - labels[:,0])**2)/preds.shape[0]
+            val_loss1 = torch.sum((preds[:,1] - labels[:,1])**2)/preds.shape[0]
+            val_loss = criterion(preds, labels)
+        else: 
+            val_loss = torch.sum((preds-labels)**2)/len(preds)
         nc_val = compute_metrics(W, all_feats)
+        val_hnorm = torch.norm(all_feats, p=2, dim=1).mean().item()
+        del all_feats, preds, labels
 
         nc_dt = {
             'ww00': WWT[0, 0].item(),
-            'ww01': WWT[0, 1].item(),
-            'ww11': WWT[1, 1].item(),
-            'w_cos': F.cosine_similarity(W[0], W[1], dim=0).item(),
+            'ww01': WWT[0, 1].item() if args.num_y == 2 else 0,
+            'ww11': WWT[1, 1].item() if args.num_y == 2 else 0 ,
+            'w_cos': F.cosine_similarity(W[0], W[1], dim=0).item() if args.num_y == 2 else 0,
             'train_mse': train_loss,
             'train_nc1': nc_train['nc1'],
             'train_nc3': nc_train['nc3'],
@@ -171,32 +188,26 @@ def main(args):
             'val_nc1': nc_val['nc1'],
             'val_nc3': nc_val['nc3'],
             'val_nc3a': nc_val['nc3a'],
-            'h_norm': torch.norm(all_feats, p=2, dim=1).mean().item()
+            'train_hnorm': train_hnorm, 
+            'val_hnorm': val_hnorm, 
         }
 
         # ================ NC2 ================
         WWT_normalized = WWT / np.linalg.norm(WWT)
         min_eigval = theory_stat['min_eigval']
-        Sigma_sqrt = np.array([theory_stat[k] for k in ['sigma11', 'sigma12', 'sigma21', 'sigma22']]).reshape(2, 2)
+        Sigma_sqrt = theory_stat['Sigma_sqrt']
 
         c_to_plot = np.linspace(0, min_eigval, num=1000)
         NC2_to_plot = []
-        NC2_11_to_plot = []
-        NC2_12_to_plot = []
-        NC2_22_to_plot = []
         for c in c_to_plot:
             c_sqrt = c ** 0.5
             A = Sigma_sqrt - c_sqrt * np.eye(2)
             A_normalized = A / np.linalg.norm(A)
             diff_mat = WWT_normalized - A_normalized
             NC2_to_plot.append(np.linalg.norm(diff_mat))
-            NC2_11_to_plot.append(diff_mat[0, 0])
-            NC2_12_to_plot.append(diff_mat[0, 1])
-            NC2_22_to_plot.append(diff_mat[1, 1])
 
-        data = [[a, b, c, d, f] for (a, b, c, d, f) in
-                zip(c_to_plot, NC2_to_plot, NC2_11_to_plot, NC2_12_to_plot, NC2_22_to_plot)]
-        table = wandb.Table(data=data, columns=["c", "NC2", "NC2_11", "NC2_12", "NC2_22"])
+        data = [[a, b] for (a, b) in zip(c_to_plot, NC2_to_plot)]
+        table = wandb.Table(data=data, columns=["c", "NC2"])
         wandb.log(
             {
                 "NC2(c)": wandb.plot.line(
@@ -206,14 +217,13 @@ def main(args):
         )
         best_c = c_to_plot[np.argmin(NC2_to_plot)]
         nc_dt['nc2'] = min(NC2_to_plot)
-        nc_tracker.load_dt(nc_dt, epoch=epoch)
+        # nc_tracker.load_dt(nc_dt, epoch=epoch)
 
         wandb.log(
-            {'train/lr': optimizer.param_groups[0]['lr'],
-             'train/train_mse': train_loss,
-             'train/train_nc1': nc_dt['train_nc1'],
+            {'train/train_nc1': nc_dt['train_nc1'],
              'train/train_nc3': nc_dt['train_nc3'],
              'train/train_nc3a': nc_dt['train_nc3a'],
+             'train/train_mse': train_loss,
 
              'val/val_mse': val_loss,
              'val/val_nc1': nc_dt['val_nc1'],
@@ -226,21 +236,27 @@ def main(args):
              'W/w_cos': nc_dt['w_cos'],
              'W/nc2': nc_dt['nc2'],
              'W/best_c': best_c, 
-             'W/h_norm': nc_dt['h_norm'],
              
              'NC2/ww00_d': abs(nc_dt['ww00'] - W_outer[0, 0])/(abs(W_outer[0, 0])+1e-8),
-             'NC2/ww01_d': abs(nc_dt['ww01'] - W_outer[0, 1])/(abs(W_outer[0, 1])+1e-8),
-             'NC2/ww11_d': abs(nc_dt['ww11'] - W_outer[1, 1])/(abs(W_outer[1, 1])+1e-8),
+             'NC2/ww01_d': abs(nc_dt['ww01'] - W_outer[0, 1])/(abs(W_outer[0, 1])+1e-8) if args.num_y == 2 else 0,
+             'NC2/ww11_d': abs(nc_dt['ww11'] - W_outer[1, 1])/(abs(W_outer[1, 1])+1e-8) if args.num_y == 2 else 0,
              'NC2/ww_d': np.sum( (WWT/np.linalg.norm(WWT) -W_outer/np.linalg.norm(W_outer))**2 ),
-             'NC2/ww_d1': np.sum( ((WWT -W_outer)/np.linalg.norm(W_outer))**2 )
+             'NC2/ww_d1': np.sum( ((WWT -W_outer)/np.linalg.norm(W_outer))**2 ),
+             
+             'other/lr': optimizer.param_groups[0]['lr'],
+             'other/train_hnorm': nc_dt['train_hnorm'],
+             'other/val_hnorm': nc_dt['val_hnorm'],
              },
             step=epoch)
+        if args.num_y == 2: 
+             wandb.log({'train/train_mse0': train_loss0,'train/train_mse1': train_loss1, 
+                        'val/val_mse0': val_loss0,'val/val_mse1': val_loss1}, step=epoch)
 
         log('Epoch {}/{}, runnning train mse: {:.4f}, ww00: {:.4f}, ww01: {:.4f}, ww11: {:.4f}'.format(
             epoch, args.max_epoch, train_loss, nc_dt['ww00'], nc_dt['ww01'], nc_dt['ww11']
         ))
 
-        if epoch % args.save_freq == 0:
+        if epoch > 0 and epoch % args.save_freq == 0:
             ckpt_path = os.path.join(args.save_dir, 'ep{}_ckpt.pth'.format(epoch))
             torch.save({
                 'epoch': epoch,
@@ -251,10 +267,10 @@ def main(args):
 
             log('--save model to {}'.format(ckpt_path))
         
-        if (epoch+1) % (args.save_freq*10) == 0:
-            filename = os.path.join(args.save_dir, 'train_nc{}.pkl'.format(epoch))
-            with open(filename, 'wb') as f:
-                pickle.dump(nc_tracker, f)
+        # if (epoch+1) % (args.save_freq*10) == 0:
+        #     filename = os.path.join(args.save_dir, 'train_nc{}.pkl'.format(epoch))
+        #     with open(filename, 'wb') as f:
+        #         pickle.dump(nc_tracker, f)
             
         all_feats, train_loss = train_one_epoch(model, train_loader, optimizer, criterion, args=args)
         if epoch < args.warmup:
@@ -270,14 +286,16 @@ if __name__ == '__main__':
     parser.add_argument('--data_ratio', type=float, default=1.0)
     
     parser.add_argument('--arch', type=str, default='resnet18')
+    parser.add_argument('--num_y', type=int, default=2)
+    parser.add_argument('--which_y', type=int, default=-1)
     parser.add_argument('--y_norm', type=str, default='null')
     parser.add_argument('--act', type=str, default='relu')
     parser.add_argument('--w', type=str, default='null')
+    parser.add_argument('--bn', type=str, default='f') # f|t|p false|true|parametric 
     
 
     parser.add_argument('--max_epoch', type=int, default=1000)
     parser.add_argument('--batch_size', type=int, default=64)
-    parser.add_argument('--num_y', type=int, default=2)
     parser.add_argument('--feat', type=str, default='b')
     parser.add_argument('--lr', type=float, default=1e-3)
     parser.add_argument('--warmup', type=int, default=0)

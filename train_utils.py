@@ -57,12 +57,15 @@ def compute_cosine_norm(W):
 
 
 def gram_schmidt(W):
-    U = torch.empty_like(W)
-    U[0, :] = W[0, :] / torch.norm(W[0, :], p=2)
+    if W.shape[0] == 2: 
+        U = torch.empty_like(W)
+        U[0, :] = W[0, :] / torch.norm(W[0, :], p=2)
 
-    proj = torch.dot(U[0, :], W[1, :]) * U[0, :]
-    ortho_vector = W[1, :] - proj
-    U[1, :] = ortho_vector / torch.norm(ortho_vector, p=2)
+        proj = torch.dot(U[0, :], W[1, :]) * U[0, :]
+        ortho_vector = W[1, :] - proj
+        U[1, :] = ortho_vector / torch.norm(ortho_vector, p=2)
+    elif W.shape[0] == 1: 
+        U = W / torch.norm(W, p=2)
 
     return U
 
@@ -196,24 +199,22 @@ def get_theoretical_solution(train_loader, args, bias=None, all_labels=None, cen
     Sigma = torch.matmul(center_labels.T, center_labels)/len(center_labels)
     Sigma = Sigma.cpu().numpy()
 
-    eigenvalues, eigenvectors = np.linalg.eig(Sigma)
-    sqrt_eigenvalues = np.sqrt(eigenvalues)
-    Sigma_sqrt = eigenvectors @ np.diag(sqrt_eigenvalues) @ np.linalg.inv(eigenvectors)
-    min_eigval = eigenvalues[0]
-    max_eigval = eigenvalues[-1]
+    if args.num_y == 2: 
+        eigenvalues, eigenvectors = np.linalg.eig(Sigma)
+        sqrt_eigenvalues = np.sqrt(eigenvalues)
+        Sigma_sqrt = eigenvectors @ np.diag(sqrt_eigenvalues) @ np.linalg.inv(eigenvectors)
+        min_eigval = eigenvalues[0]
+        max_eigval = eigenvalues[-1]
+    elif args.num_y == 1: 
+        Sigma_sqrt = np.sqrt(Sigma)
+        min_eigval, max_eigval = Sigma_sqrt, Sigma_sqrt
 
     W_outer = args.lambda_H * (Sigma_sqrt/np.sqrt(args.lambda_H*args.lambda_W) - np.eye(args.num_y))
     theory_stat = {
-            'mu11': Sigma[0, 0],  # covariance matrix
-            'mu12': Sigma[0, 1],
-            'mu22': Sigma[1, 1],
+            'mu': mu.cpu().numpy(), 
+            'Sigma': Sigma, 
+            'Sigma_sqrt': Sigma_sqrt,
             'min_eigval': min_eigval,
             'max_eigval': max_eigval,
-            'sigma11': Sigma_sqrt[0, 0],
-            'sigma12': Sigma_sqrt[0, 1],
-            'sigma21': Sigma_sqrt[1, 0],
-            'sigma22': Sigma_sqrt[1, 1],
-            'mu1': mu[0].item(),
-            'mu2': mu[1].item()
         }
     return W_outer, mu.cpu().numpy(), Sigma_sqrt, all_labels, theory_stat  # all_labels is still tensor
