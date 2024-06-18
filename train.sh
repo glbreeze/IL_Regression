@@ -11,7 +11,7 @@
 
 # job info
 FEAT=$1
-WD=$2
+ARCH=$2
 
 # Singularity path
 ext3_path=/scratch/$USER/overlay-25GB-500K.ext3
@@ -23,7 +23,7 @@ singularity exec --nv \
 --overlay /scratch/lg154/sseg/dataset/tiny-imagenet-200.sqf:ro \
 ${sif_path} /bin/bash -c "
 source /ext3/env.sh
-python train.py --batch_size 1024 --feat ${FEAT} --lr 2e-3 --warmup 10 --wd ${WD} --exp_name wd${WD}_${FEAT}_ob_lr2
+python train.py --batch_size 1024 --arch ${ARCH} --feat ${FEAT} --lr 1e-3 --warmup 10 --ufm --exp_name ufm_${ARCH}_${FEAT}_ob
  " 
 
 

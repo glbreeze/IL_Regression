@@ -27,6 +27,8 @@ def train_one_epoch(model, data_loader, optimizer, criterion, args):
     for batch_idx, batch in enumerate(data_loader):
         images = batch['input'].to(device, non_blocking=True)
         targets = batch['target'].to(device, non_blocking=True)
+        if targets.ndim == 1: 
+            targets = targets.unsqueeze(1)
         optimizer.zero_grad()
         outputs, feats = model(images, ret_feat=True)
         all_feats.append(feats.data)
@@ -39,8 +41,6 @@ def train_one_epoch(model, data_loader, optimizer, criterion, args):
 
         loss.backward()
         optimizer.step()
-
-        print(loss.item())
 
         running_loss += loss.item()
         running_train_loss = running_loss / len(data_loader)
@@ -156,23 +156,23 @@ def main(args):
 
         # ===============compute train mse and projection error==================
         all_feats, preds, labels = get_feat_pred(model, train_loader)
-        if labels.shape[-1] == 2:
+        if preds.shape[-1] == 2:
             train_loss0 = torch.sum((preds[:,0] - labels[:,0])**2)/preds.shape[0]
             train_loss1 = torch.sum((preds[:,1] - labels[:,1])**2)/preds.shape[0]
             train_loss = criterion(preds, labels)
         else: 
-            train_loss = torch.sum((preds-labels)**2)/len(preds)
+            train_loss = torch.sum((preds.flatten()-labels.flatten())**2)/len(preds)
         nc_train = compute_metrics(W, all_feats)
         train_hnorm = torch.norm(all_feats, p=2, dim=1).mean().item()
 
         # ===============compute val mse and projection error==================
         all_feats, preds, labels = get_feat_pred(model, val_loader)
-        if labels.shape[-1] == 2: 
+        if preds.shape[-1] == 2: 
             val_loss0 = torch.sum((preds[:,0] - labels[:,0])**2)/preds.shape[0]
             val_loss1 = torch.sum((preds[:,1] - labels[:,1])**2)/preds.shape[0]
             val_loss = criterion(preds, labels)
         else: 
-            val_loss = torch.sum((preds-labels)**2)/len(preds)
+            val_loss = torch.sum((preds.flatten()-labels.flatten())**2)/len(preds)
         nc_val = compute_metrics(W, all_feats)
         val_hnorm = torch.norm(all_feats, p=2, dim=1).mean().item()
         del all_feats, preds, labels
