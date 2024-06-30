@@ -1,8 +1,9 @@
 import os
 import pdb
-import pickle
 import torch
 import wandb
+import pickle
+from scipy.linalg import qr
 import argparse
 import numpy as np
 import torch.nn as nn
@@ -59,6 +60,20 @@ def main(args):
             args.num_y = train_loader.dataset.action_dim
         else:
             args.num_y = 1
+            
+    # ================== setup wandb  ==================
+
+    os.environ["WANDB_API_KEY"] = "0c0abb4e8b5ce4ee1b1a4ef799edece5f15386ee"
+    os.environ["WANDB_MODE"] = "online"  # "dryrun"
+    os.environ["WANDB_CACHE_DIR"] = "/scratch/lg154/sseg/.cache/wandb"
+    os.environ["WANDB_CONFIG_DIR"] = "/scratch/lg154/sseg/.config/wandb"
+    os.environ["WANDB_ARTIFACT_DIR"] = "/scratch/lg154/sseg/wandb"
+    os.environ["WANDB_DATA_DIR"] = "/scratch/lg154/sseg/wandb/data"
+    wandb.login(key='0c0abb4e8b5ce4ee1b1a4ef799edece5f15386ee')
+    wandb.init(project='gl_' + args.dataset,
+               name=args.exp_name.split('/')[-1]
+               )
+    wandb.config.update(args)
 
     # =================== theoretical solution ================
     W_outer, mu, Sigma_sqrt, all_labels, theory_stat = get_theoretical_solution(train_loader, args, bias=None,
@@ -71,21 +86,48 @@ def main(args):
         model = RegressionResNet(pretrained=True, num_outputs=args.num_y, args=args).to(device)
     elif args.arch.startswith('mlp'):
         model = MLP(in_dim=args.num_x, out_dim=args.num_y, args=args, arch=args.arch.replace('mlp',''))
+    
+    num_params = sum([param.nelement() for param in model.parameters()])
+    log('--- total num of params: {} ---'.format(num_params))
 
     if args.w == 'n' or args.w == 'null':
         pass
-    elif args.w == 'e':
+    elif args.w in ['e', 'e1', 'f', 'f1', 'f2', 'f3']: 
         if args.bias:
             model.fc.bias = nn.Parameter(torch.tensor(mu))
             model.fc.bias.requires_grad_(False)
-
-        eigenvalues, eigenvectors = np.linalg.eig(Sigma_sqrt)
-        A_sqrt = eigenvectors @ np.diag(np.sqrt(eigenvalues)) @ eigenvectors.T
-        if args.w == 'e':
-            model.fc.weight = nn.Parameter(
-                torch.tensor(A_sqrt @ np.eye(model.fc.weight.shape[0], model.fc.weight.shape[1]), dtype=torch.float32)
-            )
-            model.fc.weight.requires_grad_(False)
+            
+        np.random.seed(2021)
+        H = np.random.randn(model.fc.weight.shape[1], model.fc.weight.shape[1])
+        Q, R = qr(H)
+        import pickle
+        with open(os.path.join(os.path.dirname(args.save_dir), args.save_w, 'fc_w.pkl'), 'rb') as f:
+            pretrained_dt = pickle.load(f)
+        
+        if args.w == 'f':
+            fixed_w = pretrained_dt['w']
+        elif args.w == 'f1': 
+            fixed_w = pretrained_dt['w'] @ Q
+        elif args.w == 'f2': 
+            p = model.fc.weight.shape[1]//2
+            Q_modified = Q[:, :p] @ Q[:, :p].T - Q[:, p:] @ Q[:, p:].T
+            fixed_w = pretrained_dt['w'] @ Q_modified
+        elif args.w == 'f3': 
+            WWT = pretrained_dt['w'] @ pretrained_dt['w'].T
+            eigenvalues, eigenvectors = np.linalg.eig(WWT)
+            fixed_w = eigenvectors @ np.diag(np.sqrt(eigenvalues)) @ eigenvectors.T @ np.eye(model.fc.weight.shape[0], model.fc.weight.shape[1])
+            
+        elif args.w == 'e1': 
+            eigenvalues, eigenvectors = np.linalg.eig(pretrained_dt['wwt'])
+            fixed_w = eigenvectors @ np.diag(np.sqrt(eigenvalues)) @ eigenvectors.T @ np.eye(model.fc.weight.shape[0], model.fc.weight.shape[1])
+        elif args.w == 'e':
+            eigenvalues, eigenvectors = np.linalg.eig(Sigma_sqrt)
+            fixed_w = eigenvectors @ np.diag(np.sqrt(eigenvalues)) @ eigenvectors.T @ np.eye(model.fc.weight.shape[0], model.fc.weight.shape[1])
+            
+        model.fc.weight = nn.Parameter(torch.tensor(fixed_w, dtype=torch.float32))
+        model.fc.weight.requires_grad_(False)
+        print('-----fixed W loaded from {}'.format(os.path.join(os.path.dirname(args.save_dir), args.save_w, 'fc_w.pkl')))
+        
 
     _ = print_model_param_nums(model=model)
     if torch.cuda.is_available():
@@ -116,20 +158,6 @@ def main(args):
             print("=> loaded checkpoint '{}' (epoch {})".format(args.resume, checkpoint['epoch']))
         else:
             print("=> no checkpoint found at '{}'".format(args.resume))
-
-    # ================== setup wandb  ==================
-
-    os.environ["WANDB_API_KEY"] = "0c0abb4e8b5ce4ee1b1a4ef799edece5f15386ee"
-    os.environ["WANDB_MODE"] = "online"  # "dryrun"
-    os.environ["WANDB_CACHE_DIR"] = "/scratch/lg154/sseg/.cache/wandb"
-    os.environ["WANDB_CONFIG_DIR"] = "/scratch/lg154/sseg/.config/wandb"
-    os.environ["WANDB_ARTIFACT_DIR"] = "/scratch/lg154/sseg/wandb"
-    os.environ["WANDB_DATA_DIR"] = "/scratch/lg154/sseg/wandb/data"
-    wandb.login(key='0c0abb4e8b5ce4ee1b1a4ef799edece5f15386ee')
-    wandb.init(project='gl_' + args.dataset,
-               name=args.exp_name.split('/')[-1]
-               )
-    wandb.config.update(args)
 
     # ================== log the theoretical result  ==================
     if False: 
@@ -275,7 +303,11 @@ def main(args):
             warmup_scheduler.step()
         else:
             scheduler.step()
-
+        # =============== save w 
+        if args.save_w=='t' and (epoch+1)%100==0: 
+            import pickle 
+            with open(os.path.join(args.save_dir, 'fc_w.pkl'), 'wb') as f: 
+                pickle.dump({'w':model.fc.weight.data.cpu().numpy(), 'wwt':W_outer, 'Sigma_sqrt': Sigma_sqrt}, f)
 
 
 if __name__ == '__main__':
@@ -301,6 +333,7 @@ if __name__ == '__main__':
     parser.add_argument('--lambda_W', type=float, default=1e-3)
     parser.add_argument('--wd', type=float, default=5e-4)
     parser.add_argument('--scheduler', type=str, default='multi_step')
+    parser.add_argument('--save_w', type=str, default='f')
 
     parser.add_argument('--ufm', default=False, action='store_true')
     parser.add_argument('--bias', default=False, action='store_true')
