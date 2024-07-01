@@ -157,9 +157,12 @@ class MujocoBuffer(Dataset):
                     self.y_shift = np.mean(self.actions, axis=0)
                     centered_data = self.actions - self.y_shift
                     covariance_matrix = np.dot(centered_data.T, centered_data) / len(self.actions)
-                    eigenvalues, eigenvectors = np.linalg.eig(covariance_matrix)
-                    self.div = eigenvectors @ np.diag(1 / np.sqrt(eigenvalues)) @ np.linalg.inv(eigenvectors)
-                    self.std = eigenvectors @ np.diag(np.sqrt(eigenvalues)) @ np.linalg.inv(eigenvectors)
+                    if self.args.which_y == -1:
+                        eigenvalues, eigenvectors = np.linalg.eig(covariance_matrix)
+                        self.div = eigenvectors @ np.diag(1 / np.sqrt(eigenvalues)) @ np.linalg.inv(eigenvectors)
+                        self.std = eigenvectors @ np.diag(np.sqrt(eigenvalues)) @ np.linalg.inv(eigenvectors)
+                    else:
+                        self.div, self.std = 1/np.sqrt(covariance_matrix), np.sqrt(covariance_matrix)
             else:
                 self.y_shift = y_shift
                 centered_data = self.actions - self.y_shift
@@ -188,7 +191,7 @@ class MujocoBuffer(Dataset):
             if self.args.which_y == -1:
                 pass
             elif self.args.which_y >= 0:
-                self.actions = self.actions[:, self.args.which_y]
+                self.actions = self.actions[:, self.args.which_y].reshape(-1, 1)
         except Exception as e:
             print(e)
 
