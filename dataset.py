@@ -159,6 +159,7 @@ class MujocoBuffer(Dataset):
                     covariance_matrix = np.dot(centered_data.T, centered_data) / len(self.actions)
                     eigenvalues, eigenvectors = np.linalg.eig(covariance_matrix)
                     self.div = eigenvectors @ np.diag(1 / np.sqrt(eigenvalues)) @ np.linalg.inv(eigenvectors)
+                    self.std = eigenvectors @ np.diag(np.sqrt(eigenvalues)) @ np.linalg.inv(eigenvectors)
             else:
                 self.y_shift = y_shift
                 centered_data = self.actions - self.y_shift

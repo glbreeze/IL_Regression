@@ -86,10 +86,18 @@ def main(args):
         model = RegressionResNet(pretrained=True, num_outputs=args.num_y, args=args).to(device)
     elif args.arch.startswith('mlp'):
         model = MLP(in_dim=args.num_x, out_dim=args.num_y, args=args, arch=args.arch.replace('mlp',''))
+    if torch.cuda.is_available():
+        model = model.cuda()
     
     num_params = sum([param.nelement() for param in model.parameters()])
     log('--- total num of params: {} ---'.format(num_params))
 
+    if model.fc.bias is not None:
+        log("--- classification layer has bias terms. ---")
+    else:
+        log("--- classification layer DO NOT have bias terms. ---")
+
+    # ===================   whether to fix w   ===================
     if args.w == 'n' or args.w == 'null':
         pass
     elif args.w in ['e', 'e1', 'f', 'f1', 'f2', 'f3']: 
@@ -127,16 +135,8 @@ def main(args):
         model.fc.weight = nn.Parameter(torch.tensor(fixed_w, dtype=torch.float32))
         model.fc.weight.requires_grad_(False)
         print('-----fixed W loaded from {}'.format(os.path.join(os.path.dirname(args.save_dir), args.save_w, 'fc_w.pkl')))
-        
 
-    _ = print_model_param_nums(model=model)
-    if torch.cuda.is_available():
-        model = model.cuda()
-    if model.fc.bias is not None:
-        log("classification layer has bias terms.")
-    else:
-        log("classification layer DO NOT have bias terms.")
-
+    # ==== optimizer and scheduler
     if args.ufm:
         optimizer = torch.optim.SGD(model.parameters(), momentum=0.9, lr=args.lr, weight_decay=0)
     else:
@@ -184,6 +184,10 @@ def main(args):
 
         # ===============compute train mse and projection error==================
         all_feats, preds, labels = get_feat_pred(model, train_loader)
+        if args.y_norm == 'std':
+            y_shift, std = train_loader.dataset.y_shift, train_loader.dataset.std
+            preds = preds @ std + y_shift
+            labels = labels @ std + y_shift
         if preds.shape[-1] == 2:
             train_loss0 = torch.sum((preds[:,0] - labels[:,0])**2)/preds.shape[0]
             train_loss1 = torch.sum((preds[:,1] - labels[:,1])**2)/preds.shape[0]
@@ -192,9 +196,14 @@ def main(args):
             train_loss = torch.sum((preds.flatten()-labels.flatten())**2)/len(preds)
         nc_train = compute_metrics(W, all_feats)
         train_hnorm = torch.norm(all_feats, p=2, dim=1).mean().item()
+        train_wnorm = torch.norm(w, p=2, dim=1).mean().item()
 
         # ===============compute val mse and projection error==================
         all_feats, preds, labels = get_feat_pred(model, val_loader)
+        if args.y_norm == 'std':
+            y_shift, std = train_loader.dataset.y_shift, train_loader.dataset.std
+            preds = preds @ std + y_shift
+            labels = labels @ std + y_shift
         if preds.shape[-1] == 2: 
             val_loss0 = torch.sum((preds[:,0] - labels[:,0])**2)/preds.shape[0]
             val_loss1 = torch.sum((preds[:,1] - labels[:,1])**2)/preds.shape[0]
@@ -218,7 +227,8 @@ def main(args):
             'val_nc1': nc_val['nc1'],
             'val_nc3': nc_val['nc3'],
             'val_nc3a': nc_val['nc3a'],
-            'train_hnorm': train_hnorm, 
+            'train_hnorm': train_hnorm,
+            'train_wnorm': train_wnorm,
             'val_hnorm': val_hnorm, 
         }
 
@@ -249,6 +259,7 @@ def main(args):
         nc_dt['nc2'] = min(NC2_to_plot)
         # nc_tracker.load_dt(nc_dt, epoch=epoch)
 
+        # ================ log to wandb ================
         wandb.log(
             {'train/train_nc1': nc_dt['train_nc1'],
              'train/train_nc3': nc_dt['train_nc3'],
@@ -276,11 +287,17 @@ def main(args):
              'other/lr': optimizer.param_groups[0]['lr'],
              'other/train_hnorm': nc_dt['train_hnorm'],
              'other/val_hnorm': nc_dt['val_hnorm'],
+             'other/wnorm': nc_dt['train_wnorm']
              },
             step=epoch)
-        if args.num_y == 2: 
+        if args.which_y == -1:
              wandb.log({'train/train_mse0': train_loss0,'train/train_mse1': train_loss1, 
                         'val/val_mse0': val_loss0,'val/val_mse1': val_loss1}, step=epoch)
+        elif args.which_y == 0:
+            wandb.log({'train/train_mse0': train_loss, 'val/val_mse0': val_loss}, step=epoch)
+        elif args.which_y == 1:
+            wandb.log({'train/train_mse1': train_loss, 'val/val_mse1': val_loss}, step=epoch)
+
 
         log('Epoch {}/{}, runnning train mse: {:.4f}, ww00: {:.4f}, ww01: {:.4f}, ww11: {:.4f}'.format(
             epoch, args.max_epoch, train_loss, nc_dt['ww00'], nc_dt['ww01'], nc_dt['ww11']
