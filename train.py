@@ -185,7 +185,7 @@ def main(args):
         # ===============compute train mse and projection error==================
         all_feats, preds, labels = get_feat_pred(model, train_loader)
         if args.y_norm == 'std':
-            y_shift, std = train_loader.dataset.y_shift, train_loader.dataset.std
+            y_shift, std = torch.tensor(train_loader.dataset.y_shift).to(preds.device), torch.tensor(train_loader.dataset.std).to(preds.device)
             preds = preds @ std + y_shift
             labels = labels @ std + y_shift
         if preds.shape[-1] == 2:
@@ -196,12 +196,12 @@ def main(args):
             train_loss = torch.sum((preds.flatten()-labels.flatten())**2)/len(preds)
         nc_train = compute_metrics(W, all_feats)
         train_hnorm = torch.norm(all_feats, p=2, dim=1).mean().item()
-        train_wnorm = torch.norm(w, p=2, dim=1).mean().item()
+        train_wnorm = torch.norm(W, p=2, dim=1).mean().item()
 
         # ===============compute val mse and projection error==================
         all_feats, preds, labels = get_feat_pred(model, val_loader)
         if args.y_norm == 'std':
-            y_shift, std = train_loader.dataset.y_shift, train_loader.dataset.std
+            y_shift, std = torch.tensor(train_loader.dataset.y_shift).to(preds.device), torch.tensor(train_loader.dataset.std).to(preds.device)
             preds = preds @ std + y_shift
             labels = labels @ std + y_shift
         if preds.shape[-1] == 2: 
