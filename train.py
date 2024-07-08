@@ -102,7 +102,7 @@ def main(args):
         pass
     elif args.w in ['e', 'e1', 'f', 'f1', 'f2', 'f3']: 
         if args.bias:
-            model.fc.bias = nn.Parameter(torch.tensor(mu))
+            model.fc.bias = nn.Parameter(torch.tensor(mu).to(device))
             model.fc.bias.requires_grad_(False)
             
         np.random.seed(2021)
@@ -126,13 +126,13 @@ def main(args):
             fixed_w = eigenvectors @ np.diag(np.sqrt(eigenvalues)) @ eigenvectors.T @ np.eye(model.fc.weight.shape[0], model.fc.weight.shape[1])
             
         elif args.w == 'e1': 
-            eigenvalues, eigenvectors = np.linalg.eig(pretrained_dt['wwt'])
+            eigenvalues, eigenvectors = np.linalg.eig(W_outer)
             fixed_w = eigenvectors @ np.diag(np.sqrt(eigenvalues)) @ eigenvectors.T @ np.eye(model.fc.weight.shape[0], model.fc.weight.shape[1])
         elif args.w == 'e':
             eigenvalues, eigenvectors = np.linalg.eig(Sigma_sqrt)
             fixed_w = eigenvectors @ np.diag(np.sqrt(eigenvalues)) @ eigenvectors.T @ np.eye(model.fc.weight.shape[0], model.fc.weight.shape[1])
             
-        model.fc.weight = nn.Parameter(torch.tensor(fixed_w, dtype=torch.float32))
+        model.fc.weight = nn.Parameter(torch.tensor(fixed_w, dtype=torch.float32).to(device))
         model.fc.weight.requires_grad_(False)
         print('-----fixed W loaded from {}'.format(os.path.join(os.path.dirname(args.save_dir), args.save_w, 'fc_w.pkl')))
 
@@ -184,7 +184,7 @@ def main(args):
 
         # ===============compute train mse and projection error==================
         all_feats, preds, labels = get_feat_pred(model, train_loader)
-        if args.y_norm == 'std':
+        if args.y_norm in ['std', 'norm']:
             y_shift, std = torch.tensor(train_loader.dataset.y_shift).to(preds.device), torch.tensor(train_loader.dataset.std).to(preds.device)
             preds = preds @ std + y_shift
             labels = labels @ std + y_shift
@@ -200,7 +200,7 @@ def main(args):
 
         # ===============compute val mse and projection error==================
         all_feats, preds, labels = get_feat_pred(model, val_loader)
-        if args.y_norm == 'std':
+        if args.y_norm in ['std', 'norm']:
             y_shift, std = torch.tensor(train_loader.dataset.y_shift).to(preds.device), torch.tensor(train_loader.dataset.std).to(preds.device)
             preds = preds @ std + y_shift
             labels = labels @ std + y_shift

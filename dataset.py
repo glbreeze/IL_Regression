@@ -148,7 +148,11 @@ class MujocoBuffer(Dataset):
                     self.y_shift = np.mean(self.actions, axis=0)
                     centered_data = self.actions - self.y_shift
                     covariance_matrix = np.dot(centered_data.T, centered_data) / len(self.actions)
-                    self.div = np.diag(1 / np.sqrt(np.diag(covariance_matrix)))
+                    if self.args.which_y == -1:
+                        self.div = np.diag(1 / np.sqrt(np.diag(covariance_matrix)))
+                        self.std = np.diag(np.sqrt(np.diag(covariance_matrix)))
+                    else: 
+                        self.div, self.std = 1/np.sqrt(covariance_matrix), np.sqrt(covariance_matrix)
                 elif self.args.y_norm == 'scale':
                     self.y_shift = np.min(self.actions, axis=0)
                     centered_data = self.actions - self.y_shift
