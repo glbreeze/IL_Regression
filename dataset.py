@@ -183,8 +183,8 @@ class MujocoBuffer(Dataset):
             self.div = div
             centered_data = self.actions - self.y_shift
 
-            self.actions = centered_data @ self.div
-            # self.actions = centered_data / self.div
+        self.actions = centered_data @ self.div
+        # self.actions = centered_data / self.div
 
     def _to_tensor(self, data: np.ndarray) -> torch.Tensor:
         return torch.tensor(data, dtype=torch.float32)
