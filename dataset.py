@@ -140,6 +140,7 @@ class MujocoBuffer(Dataset):
         self.args=args
         self.state_dim = 0
         self.action_dim = 0
+        self.env = env
 
         self.states, self.actions = None, None
         self._load_dataset(data_folder, env, split, data_ratio)
@@ -157,6 +158,8 @@ class MujocoBuffer(Dataset):
                 self.x_shift = np.mean(self.states, axis=0)
                 centered_data = self.states - self.x_shift  # [B, d]
                 covariance_matrix = centered_data.T @ centered_data / len(self.states)
+                if self.env == 'reacher':    # last dim value is constant 0 
+                    covariance_matrix[-1, -1] = 1.0
                 self.x_div = np.diag(1 / np.sqrt(np.diag(covariance_matrix)))
                 self.states = centered_data @ self.x_div
         else:
