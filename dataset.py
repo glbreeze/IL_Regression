@@ -142,7 +142,7 @@ class MujocoBuffer(Dataset):
         if self.args.y_norm == 'null':
             self.y_shift = None
             self.div = None
-        elif self.args.y_norm in ['norm', 'std', 'scale']:
+        elif self.args.y_norm in ['norm', 'norm0', 'std', 'scale', 'std2']:
             if split == 'train':
                 if self.args.y_norm == 'norm':
                     self.y_shift = np.mean(self.actions, axis=0)
@@ -153,11 +153,16 @@ class MujocoBuffer(Dataset):
                         self.std = np.diag(np.sqrt(np.diag(covariance_matrix)))
                     else: 
                         self.div, self.std = 1/np.sqrt(covariance_matrix), np.sqrt(covariance_matrix)
-                elif self.args.y_norm == 'scale':
-                    self.y_shift = np.min(self.actions, axis=0)
-                    centered_data = self.actions - self.y_shift
-                    self.div = np.diag( 1/(np.max(self.actions, axis=0)- self.y_shift))
-                elif self.args.y_norm == 'std':
+                elif self.args.y_norm == 'norm0':
+                    self.y_shift = np.zeros(self.actions.shape[-1])
+                    centered_data = self.actions          # no centering 
+                    covariance_matrix = np.dot(centered_data.T, centered_data) / len(self.actions)
+                    if self.args.which_y == -1:
+                        self.div = np.diag(1 / np.sqrt(np.diag(covariance_matrix)))
+                        self.std = np.diag(np.sqrt(np.diag(covariance_matrix)))
+                    else: 
+                        self.div, self.std = 1/np.sqrt(covariance_matrix), np.sqrt(covariance_matrix)
+                elif self.args.y_norm in ['std', 'std2']:
                     self.y_shift = np.mean(self.actions, axis=0)
                     centered_data = self.actions - self.y_shift
                     covariance_matrix = np.dot(centered_data.T, centered_data) / len(self.actions)
@@ -167,6 +172,9 @@ class MujocoBuffer(Dataset):
                         self.std = eigenvectors @ np.diag(np.sqrt(eigenvalues)) @ np.linalg.inv(eigenvectors)
                     else:
                         self.div, self.std = 1/np.sqrt(covariance_matrix), np.sqrt(covariance_matrix)
+                    if len(self.args.y_norm) > 3: 
+                            self.div = self.div * float(self.args.y_norm[3:])
+                            self.std = self.std / float(self.args.y_norm[3:])
             else:
                 self.y_shift = y_shift
                 centered_data = self.actions - self.y_shift

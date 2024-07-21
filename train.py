@@ -17,7 +17,7 @@ from sklearn.decomposition import PCA
 from dataset import SubDataset, get_dataloader
 from model import RegressionResNet, MLP
 from train_utils import Graph_Vars, get_feat_pred, gram_schmidt, get_scheduler, Train_Vars, get_theoretical_solution, compute_metrics
-from utils import print_model_param_nums, set_log_path, log, print_args
+from utils import print_model_param_nums, set_log_path, log, print_args, matrix_with_angle
 
 
 def train_one_epoch(model, data_loader, optimizer, criterion, args):
@@ -70,7 +70,7 @@ def main(args):
     os.environ["WANDB_ARTIFACT_DIR"] = "/scratch/lg154/sseg/wandb"
     os.environ["WANDB_DATA_DIR"] = "/scratch/lg154/sseg/wandb/data"
     wandb.login(key='0c0abb4e8b5ce4ee1b1a4ef799edece5f15386ee')
-    wandb.init(project='gl_' + args.dataset,
+    wandb.init(project='lg_' + args.dataset,
                name=args.exp_name.split('/')[-1]
                )
     wandb.config.update(args)
@@ -100,7 +100,7 @@ def main(args):
     # ===================   whether to fix w   ===================
     if args.w == 'n' or args.w == 'null':
         pass
-    elif args.w in ['e', 'e1', 'f', 'f1', 'f2', 'f3']: 
+    elif args.w in ['e', 'e1', 'e2' 'f', 'f1', 'f2', 'f3', 'o', 'a']: 
         if args.bias:
             model.fc.bias = nn.Parameter(torch.tensor(mu).to(device))
             model.fc.bias.requires_grad_(False)
@@ -117,20 +117,28 @@ def main(args):
         elif args.w == 'f1': 
             fixed_w = pretrained_dt['w'] @ Q
         elif args.w == 'f2': 
-            p = model.fc.weight.shape[1]//2
-            Q_modified = Q[:, :p] @ Q[:, :p].T - Q[:, p:] @ Q[:, p:].T
-            fixed_w = pretrained_dt['w'] @ Q_modified
+            WWT = pretrained_dt['w'] @ pretrained_dt['w'].T
+            eigenvalues, eigenvectors = np.linalg.eig(WWT)
+            fixed_w = eigenvectors @ np.diag(np.sqrt(eigenvalues)) @ eigenvectors.T @ Q[0:args.num_y,:]
         elif args.w == 'f3': 
             WWT = pretrained_dt['w'] @ pretrained_dt['w'].T
             eigenvalues, eigenvectors = np.linalg.eig(WWT)
             fixed_w = eigenvectors @ np.diag(np.sqrt(eigenvalues)) @ eigenvectors.T @ np.eye(model.fc.weight.shape[0], model.fc.weight.shape[1])
             
-        elif args.w == 'e1': 
-            eigenvalues, eigenvectors = np.linalg.eig(W_outer)
-            fixed_w = eigenvectors @ np.diag(np.sqrt(eigenvalues)) @ eigenvectors.T @ np.eye(model.fc.weight.shape[0], model.fc.weight.shape[1])
         elif args.w == 'e':
             eigenvalues, eigenvectors = np.linalg.eig(Sigma_sqrt)
             fixed_w = eigenvectors @ np.diag(np.sqrt(eigenvalues)) @ eigenvectors.T @ np.eye(model.fc.weight.shape[0], model.fc.weight.shape[1])
+        elif args.w == 'e1': 
+            eigenvalues, eigenvectors = np.linalg.eig(Sigma_sqrt)
+            fixed_w = eigenvectors @ np.diag(np.sqrt(eigenvalues)) @ eigenvectors.T @ Q[0:args.num_y,:]
+        elif args.w == 'e2': 
+            eigenvalues, eigenvectors = np.linalg.eig(W_outer)
+            fixed_w = eigenvectors @ np.diag(np.sqrt(eigenvalues)) @ eigenvectors.T @ np.eye(model.fc.weight.shape[0], model.fc.weight.shape[1])
+        elif args.w == 'o': 
+            fixed_w = Q[0:args.num_y,:]
+        elif args.w == 'a': 
+            fixed_w = matrix_with_angle(angle=np.pi/4)
+            
             
         model.fc.weight = nn.Parameter(torch.tensor(fixed_w, dtype=torch.float32).to(device))
         model.fc.weight.requires_grad_(False)
@@ -175,7 +183,7 @@ def main(args):
     # ================== Training ==================
     criterion = nn.MSELoss()
     nc_tracker = Graph_Vars(dim=args.num_y)
-    wandb.watch(model, criterion, log="all", log_freq=10)
+    wandb.watch(model, criterion, log="all", log_freq=20)
     for epoch in range(args.start_epoch, args.max_epoch):
         
         # === cosine between Wi's
@@ -233,70 +241,71 @@ def main(args):
         }
 
         # ================ NC2 ================
-        WWT_normalized = WWT / np.linalg.norm(WWT)
-        min_eigval = theory_stat['min_eigval']
-        Sigma_sqrt = theory_stat['Sigma_sqrt']
+        if epoch == 0 or epoch%20 == 0: 
+            WWT_normalized = WWT / np.linalg.norm(WWT)
+            min_eigval = theory_stat['min_eigval']
+            Sigma_sqrt = theory_stat['Sigma_sqrt']
 
-        c_to_plot = np.linspace(0, min_eigval, num=1000)
-        NC2_to_plot = []
-        for c in c_to_plot:
-            c_sqrt = c ** 0.5
-            A = Sigma_sqrt - c_sqrt * np.eye(2)
-            A_normalized = A / np.linalg.norm(A)
-            diff_mat = WWT_normalized - A_normalized
-            NC2_to_plot.append(np.linalg.norm(diff_mat))
+            c_to_plot = np.linspace(0, min_eigval, num=1000)
+            NC2_to_plot = []
+            for c in c_to_plot:
+                c_sqrt = c ** 0.5
+                A = Sigma_sqrt - c_sqrt * np.eye(2)
+                A_normalized = A / np.linalg.norm(A)
+                diff_mat = WWT_normalized - A_normalized
+                NC2_to_plot.append(np.linalg.norm(diff_mat))
 
-        data = [[a, b] for (a, b) in zip(c_to_plot, NC2_to_plot)]
-        table = wandb.Table(data=data, columns=["c", "NC2"])
-        wandb.log(
-            {
-                "NC2(c)": wandb.plot.line(
-                    table, "c", "NC2", title="NC2 as a Function of c"
-                )
-            }, step=epoch
-        )
-        best_c = c_to_plot[np.argmin(NC2_to_plot)]
-        nc_dt['nc2'] = min(NC2_to_plot)
-        # nc_tracker.load_dt(nc_dt, epoch=epoch)
+            data = [[a, b] for (a, b) in zip(c_to_plot, NC2_to_plot)]
+            table = wandb.Table(data=data, columns=["c", "NC2"])
+            wandb.log(
+                {
+                    "NC2(c)": wandb.plot.line(
+                        table, "c", "NC2", title="NC2 as a Function of c"
+                    )
+                }, step=epoch
+            )
+            best_c = c_to_plot[np.argmin(NC2_to_plot)]
+            nc_dt['nc2'] = min(NC2_to_plot)
+            # nc_tracker.load_dt(nc_dt, epoch=epoch)
 
         # ================ log to wandb ================
-        wandb.log(
-            {'train/train_nc1': nc_dt['train_nc1'],
-             'train/train_nc3': nc_dt['train_nc3'],
-             'train/train_nc3a': nc_dt['train_nc3a'],
-             'train/train_mse': train_loss,
+            wandb.log(
+                {'train/train_nc1': nc_dt['train_nc1'],
+                'train/train_nc3': nc_dt['train_nc3'],
+                'train/train_nc3a': nc_dt['train_nc3a'],
+                'train/train_mse': train_loss,
 
-             'val/val_mse': val_loss,
-             'val/val_nc1': nc_dt['val_nc1'],
-             'val/val_nc3': nc_dt['val_nc3'],
-             'val/val_nc3a': nc_dt['val_nc3a'],
+                'val/val_mse': val_loss,
+                'val/val_nc1': nc_dt['val_nc1'],
+                'val/val_nc3': nc_dt['val_nc3'],
+                'val/val_nc3a': nc_dt['val_nc3a'],
 
-             'W/ww00': nc_dt['ww00'],
-             'W/ww01': nc_dt['ww01'],
-             'W/ww11': nc_dt['ww11'],
-             'W/w_cos': nc_dt['w_cos'],
-             'W/nc2': nc_dt['nc2'],
-             'W/best_c': best_c, 
-             
-             'NC2/ww00_d': abs(nc_dt['ww00'] - W_outer[0, 0])/(abs(W_outer[0, 0])+1e-8),
-             'NC2/ww01_d': abs(nc_dt['ww01'] - W_outer[0, 1])/(abs(W_outer[0, 1])+1e-8) if args.num_y == 2 else 0,
-             'NC2/ww11_d': abs(nc_dt['ww11'] - W_outer[1, 1])/(abs(W_outer[1, 1])+1e-8) if args.num_y == 2 else 0,
-             'NC2/ww_d': np.sum( (WWT/np.linalg.norm(WWT) -W_outer/np.linalg.norm(W_outer))**2 ),
-             'NC2/ww_d1': np.sum( ((WWT -W_outer)/np.linalg.norm(W_outer))**2 ),
-             
-             'other/lr': optimizer.param_groups[0]['lr'],
-             'other/train_hnorm': nc_dt['train_hnorm'],
-             'other/val_hnorm': nc_dt['val_hnorm'],
-             'other/wnorm': nc_dt['train_wnorm']
-             },
-            step=epoch)
-        if args.which_y == -1:
-             wandb.log({'train/train_mse0': train_loss0,'train/train_mse1': train_loss1, 
-                        'val/val_mse0': val_loss0,'val/val_mse1': val_loss1}, step=epoch)
-        elif args.which_y == 0:
-            wandb.log({'train/train_mse0': train_loss, 'val/val_mse0': val_loss}, step=epoch)
-        elif args.which_y == 1:
-            wandb.log({'train/train_mse1': train_loss, 'val/val_mse1': val_loss}, step=epoch)
+                'W/ww00': nc_dt['ww00'],
+                'W/ww01': nc_dt['ww01'],
+                'W/ww11': nc_dt['ww11'],
+                'W/w_cos': nc_dt['w_cos'],
+                'W/nc2': nc_dt['nc2'],
+                'W/best_c': best_c, 
+                
+                'NC2/ww00_d': abs(nc_dt['ww00'] - W_outer[0, 0])/(abs(W_outer[0, 0])+1e-8),
+                'NC2/ww01_d': abs(nc_dt['ww01'] - W_outer[0, 1])/(abs(W_outer[0, 1])+1e-8) if args.num_y == 2 else 0,
+                'NC2/ww11_d': abs(nc_dt['ww11'] - W_outer[1, 1])/(abs(W_outer[1, 1])+1e-8) if args.num_y == 2 else 0,
+                'NC2/ww_d': np.sum( (WWT/np.linalg.norm(WWT) -W_outer/np.linalg.norm(W_outer))**2 ),
+                'NC2/ww_d1': np.sum( ((WWT -W_outer)/np.linalg.norm(W_outer))**2 ),
+                
+                'other/lr': optimizer.param_groups[0]['lr'],
+                'other/train_hnorm': nc_dt['train_hnorm'],
+                'other/val_hnorm': nc_dt['val_hnorm'],
+                'other/wnorm': nc_dt['train_wnorm']
+                },
+                step=epoch)
+            if args.which_y == -1:
+                wandb.log({'train/train_mse0': train_loss0,'train/train_mse1': train_loss1, 
+                            'val/val_mse0': val_loss0,'val/val_mse1': val_loss1}, step=epoch)
+            elif args.which_y == 0:
+                wandb.log({'train/train_mse0': train_loss, 'val/val_mse0': val_loss}, step=epoch)
+            elif args.which_y == 1:
+                wandb.log({'train/train_mse1': train_loss, 'val/val_mse1': val_loss}, step=epoch)
 
 
         log('Epoch {}/{}, runnning train mse: {:.4f}, ww00: {:.4f}, ww01: {:.4f}, ww11: {:.4f}'.format(
