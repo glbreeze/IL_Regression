@@ -141,9 +141,9 @@ class MujocoBuffer(Dataset):
         self._load_dataset(data_folder, env, split, data_ratio)
 
         if args.y_norm not in ['null', 'n']:
-            self.normalize_y(split=split)
+            self.normalize_y(split=split, y_shift=y_shift, div=div)
 
-    def normalize_y(self, split):
+    def normalize_y(self, split, y_shift, div):
 
         assert self.args.y_norm in ['norm', 'norm0', 'std', 'scale', 'std2']
         if split == 'train':
