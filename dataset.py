@@ -32,7 +32,9 @@ def get_dataloader(args):
             data_ratio=args.data_ratio,
             args=args,
             y_shift=train_dataset.y_shift,
-            div=train_dataset.div
+            div=train_dataset.div,
+            x_shift=train_dataset.x_shift,
+            x_div=train_dataset.x_div,
         )
 
         train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
@@ -130,7 +132,9 @@ class MujocoBuffer(Dataset):
             data_ratio,
             args = None,
             y_shift = None,
-            div = None
+            div = None,
+            x_shift=None,
+            x_div=None,
     ):
         self.size = 0
         self.args=args
@@ -140,8 +144,26 @@ class MujocoBuffer(Dataset):
         self.states, self.actions = None, None
         self._load_dataset(data_folder, env, split, data_ratio)
 
+        self.y_shift, self.div = None, None
+        self.x_shift, self.x_div = None, None
         if args.y_norm not in ['null', 'n']:
             self.normalize_y(split=split, y_shift=y_shift, div=div)
+        if args.x_norm not in ['null', 'n']:
+            self.normalize_x(split=split, x_shift=x_shift, x_div=x_div)
+
+    def normalize_x(self, split, x_shift, x_div):
+        if split == 'train':
+            if self.args.x_norm == 'norm':
+                self.x_shift = np.mean(self.states, axis=0)
+                centered_data = self.states - self.x_shift  # [B, d]
+                covariance_matrix = centered_data.T @ centered_data / len(self.states)
+                self.x_div = np.diag(1 / np.sqrt(np.diag(covariance_matrix)))
+                self.states = centered_data @ self.x_div
+        else:
+            self.x_shift = x_shift
+            self.x_div = x_div
+            centered_data = self.states - x_shift
+            self.states = centered_data @ self.x_div
 
     def normalize_y(self, split, y_shift, div):
 

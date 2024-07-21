@@ -345,6 +345,7 @@ if __name__ == '__main__':
     parser.add_argument('--num_y', type=int, default=2)
     parser.add_argument('--which_y', type=int, default=-1)
     parser.add_argument('--y_norm', type=str, default='null')
+    parser.add_argument('--x_norm', type=str, default='null')
     parser.add_argument('--act', type=str, default='relu')
     parser.add_argument('--w', type=str, default='null')
     parser.add_argument('--bn', type=str, default='f') # f|t|p false|true|parametric 
