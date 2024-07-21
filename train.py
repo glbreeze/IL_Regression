@@ -192,7 +192,7 @@ def main(args):
 
         # ===============compute train mse and projection error==================
         all_feats, preds, labels = get_feat_pred(model, train_loader)
-        if args.y_norm in ['std', 'norm']:
+        if args.y_norm not in ['null', 'n']:
             y_shift, std = torch.tensor(train_loader.dataset.y_shift).to(preds.device), torch.tensor(train_loader.dataset.std).to(preds.device)
             preds = preds @ std + y_shift
             labels = labels @ std + y_shift
@@ -208,7 +208,7 @@ def main(args):
 
         # ===============compute val mse and projection error==================
         all_feats, preds, labels = get_feat_pred(model, val_loader)
-        if args.y_norm in ['std', 'norm']:
+        if args.y_norm not in ['null', 'n']:
             y_shift, std = torch.tensor(train_loader.dataset.y_shift).to(preds.device), torch.tensor(train_loader.dataset.std).to(preds.device)
             preds = preds @ std + y_shift
             labels = labels @ std + y_shift
