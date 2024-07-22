@@ -348,7 +348,8 @@ if __name__ == '__main__':
     parser.add_argument('--x_norm', type=str, default='null')
     parser.add_argument('--act', type=str, default='relu')
     parser.add_argument('--w', type=str, default='null')
-    parser.add_argument('--bn', type=str, default='f') # f|t|p false|true|parametric 
+    parser.add_argument('--bn', type=str, default='f') # f|t|p false|true|parametric
+    parser.add_argument('--init_s', type=float, default='1.0')
     
 
     parser.add_argument('--max_epoch', type=int, default=1000)

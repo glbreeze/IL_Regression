@@ -2,6 +2,7 @@ import torch
 import numpy as np
 import torch.nn as nn
 from torchvision import models
+import torch.nn.init as init
 
 
 class RegressionResNet(nn.Module):
@@ -71,6 +72,8 @@ class RegressionResNet(nn.Module):
             )
 
         self.fc = nn.Linear(resnet_model.fc.in_features, num_outputs, bias=args.bias)
+        if self.args.init_s > 0 and self.args.init_s != 1:
+            self.fc.weight.data = self.fc.weight.data * self.args.init_s
         self.global_avg_pool = nn.AdaptiveAvgPool2d((1, 1))
     
     def forward(self, x, ret_feat=False):
