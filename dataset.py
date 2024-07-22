@@ -36,6 +36,9 @@ def get_dataloader(args):
             x_shift=train_dataset.x_shift,
             x_div=train_dataset.x_div,
         )
+        train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
+        val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False)
+        
     elif args.dataset.endswith('_ab'):
         train_dataset = MujocoAblate(data_folder=DATA_FOLDER,
                                      env=args.dataset.replace('_ab', ''),

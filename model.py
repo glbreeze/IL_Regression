@@ -153,6 +153,9 @@ class MLP(nn.Module):
             )
 
         self.fc = nn.Linear(in_dim, out_dim, bias=args.bias)
+        if self.args.init_s > 0 and self.args.init_s != 1:
+            self.fc.weight.data = self.fc.weight.data * self.args.init_s
+            print('---rescale fc weight---')
 
         self.max_action = max_action
 
