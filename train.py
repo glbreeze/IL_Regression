@@ -55,7 +55,7 @@ def main(args):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     train_loader, val_loader = get_dataloader(args)
-    if args.dataset in ['swimmer', 'reacher', 'reacher_ab', 'swimmer_ab']:
+    if args.dataset in ['swimmer', 'reacher', 'hopper', 'reacher_ab', 'swimmer_ab']:
         args.num_x = train_loader.dataset.state_dim
         if args.which_y == -1: 
             args.num_y = train_loader.dataset.action_dim
