@@ -2,6 +2,7 @@ import os
 import pdb
 import torch
 import wandb
+import random
 import pickle
 from scipy.linalg import qr
 import argparse
@@ -70,7 +71,7 @@ def main(args):
     os.environ["WANDB_ARTIFACT_DIR"] = "/scratch/lg154/sseg/wandb"
     os.environ["WANDB_DATA_DIR"] = "/scratch/lg154/sseg/wandb/data"
     wandb.login(key='0c0abb4e8b5ce4ee1b1a4ef799edece5f15386ee')
-    wandb.init(project='lg_' + args.dataset,
+    wandb.init(project='NRC_rebuttal',# + args.dataset,
                name=args.exp_name.split('/')[-1]
                )
     wandb.config.update(args)
@@ -241,7 +242,7 @@ def main(args):
         }
 
         # ================ NC2 ================
-        if epoch == 0 or epoch%20 == 0: 
+        if epoch == 0 or epoch%1 == 0: 
             WWT_normalized = WWT / np.linalg.norm(WWT)
             min_eigval = theory_stat['min_eigval']
             Sigma_sqrt = theory_stat['Sigma_sqrt']
@@ -312,7 +313,7 @@ def main(args):
             epoch, args.max_epoch, train_loss, nc_dt['ww00'], nc_dt['ww01'], nc_dt['ww11']
         ))
 
-        if epoch > 0 and epoch % args.save_freq == 0:
+        if epoch == 0 or epoch % args.save_freq == 0:
             ckpt_path = os.path.join(args.save_dir, 'ep{}_ckpt.pth'.format(epoch))
             torch.save({
                 'epoch': epoch,
@@ -335,6 +336,15 @@ def main(args):
             with open(os.path.join(args.save_dir, 'fc_w.pkl'), 'wb') as f: 
                 pickle.dump({'w':model.fc.weight.data.cpu().numpy(), 'wwt':W_outer, 'Sigma_sqrt': Sigma_sqrt}, f)
 
+
+def set_seed(SEED=666):
+    random.seed(SEED)
+    np.random.seed(SEED)
+    torch.manual_seed(SEED)
+    torch.cuda.manual_seed(SEED)
+    torch.cuda.manual_seed_all(SEED)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Regression NC")
@@ -371,6 +381,7 @@ if __name__ == '__main__':
                         help='manual epoch number (useful on restarts)')
     parser.add_argument('--save_freq', default=10, type=int)
 
+    parser.add_argument("--seed", type=int, default=2021, help="random seed")
     parser.add_argument('--exp_name', type=str, default='exp')
     args = parser.parse_args()
     
@@ -383,4 +394,5 @@ if __name__ == '__main__':
     log('save log to path {}'.format(args.save_dir))
     log(print_args(args))
 
+    set_seed(args.seed)
     main(args)
