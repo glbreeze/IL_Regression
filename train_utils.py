@@ -199,7 +199,7 @@ def get_theoretical_solution(train_loader, args, bias=None, all_labels=None, cen
     Sigma = torch.matmul(center_labels.T, center_labels)/len(center_labels)
     Sigma = Sigma.cpu().numpy()
 
-    if args.num_y == 2: 
+    if args.num_y >= 2:
         eigenvalues, eigenvectors = np.linalg.eig(Sigma)
         sqrt_eigenvalues = np.sqrt(eigenvalues)
         Sigma_sqrt = eigenvectors @ np.diag(sqrt_eigenvalues) @ np.linalg.inv(eigenvectors)

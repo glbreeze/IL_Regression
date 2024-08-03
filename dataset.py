@@ -18,7 +18,7 @@ def get_dataloader(args):
         val_dataset = SubDataset('/vast/lg154/Carla_JPG/Val/val_list.txt', '/vast/lg154/Carla_JPG/Val/sub_targets.pkl', transform=transform, dim=args.num_y)
         val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=4, pin_memory=True, persistent_workers=True)
 
-    elif args.dataset == "swimmer" or args.dataset == 'reacher':
+    elif args.dataset in ["swimmer", 'reacher', 'hopper']:
         train_dataset = MujocoBuffer(data_folder=DATA_FOLDER,
             env=args.dataset,
             split='train',
