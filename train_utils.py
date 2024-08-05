@@ -79,30 +79,30 @@ def gram_schmidt(W):
 
 
 # ============== NC metrics ==============
-def compute_metrics(W, H, split=None):
+def compute_metrics(W, H, y_dim=None):
     result = {}
+
+    if y_dim == None:
+        y_dim = W.shape[0]
 
     # NC1
     H_np = H.cpu().numpy()
-    pca_for_H = PCA(n_components=2)
+    pca_for_H = PCA(n_components=y_dim)
     try:
         pca_for_H.fit(H_np)
     except Exception as e:
         print(e)
         result['nc1'] = -1
     else:
-        H_pca = pca_for_H.components_[:2, :]  # First two principal components [2,5]
+        H_pca = pca_for_H.components_[:y_dim, :]  # First two principal components [2,5]
 
-        try:
-            inverse_mat = np.linalg.inv(H_pca @ H_pca.T)
-        except Exception as e:
-            print(e)
-            result['nc1'] = -1
-        else:
-            P_H = H_pca.T @ inverse_mat @ H_pca
-            H_proj = (P_H @ H_np.T).T
-            result['nc1'] = np.sum((H_np - H_proj) ** 2) / H_np.shape[0]
-            del H_proj
+    # NRC1 with Gram-Schmidt
+    H_pca = torch.tensor(H_pca, device=H.device)
+    H_U = gram_schmidt(H_pca)
+    H_P = torch.mm(H_U.T, H_U)
+    H_proj_PCA = torch.mm(H, H_P)
+    result['nc1'] = F.mse_loss(H_proj_PCA, H).item()
+    del H_np, H_pca, pca_for_H
 
     try:
         inverse_mat = torch.inverse(W @ W.T)
@@ -114,16 +114,10 @@ def compute_metrics(W, H, split=None):
         result['nc3'] = torch.sum((H-H_proj_W)**2).item() / len(H)
         del H_proj_W
 
-
-        del H_pca
-    del H_np
-    del pca_for_H
-
     # Projection error with Gram-Schmidt
     U = gram_schmidt(W)
     P_E = torch.mm(U.T, U)
     H_proj = torch.mm(H, P_E)
-    # H_projected_E_norm = F.normalize(torch.tensor(H_projected_E).float().to(device), p=2, dim=1)
     result['nc3a'] = torch.sum((H_proj-H)**2).item() / len(H)
     del H_proj
 
