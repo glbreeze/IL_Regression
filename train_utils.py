@@ -15,7 +15,7 @@ def get_scheduler(args, optimizer):
     if args.max_epoch<=1000: 
         milestones=[150, 300]
     else: 
-        milestones=[args.max_epoch*0.3, args.max_epoch*0.6]
+        milestones=[args.max_epoch*0.5, args.max_epoch*1.0]
         
     SCHEDULERS = {
         'multi_step': optim.lr_scheduler.MultiStepLR(optimizer, milestones=milestones, gamma=0.2),
@@ -101,7 +101,7 @@ def compute_metrics(W, H, y_dim=None):
     H_U = gram_schmidt(H_pca)
     H_P = torch.mm(H_U.T, H_U)
     H_proj_PCA = torch.mm(H, H_P)
-    result['nc1'] = F.mse_loss(H_proj_PCA, H).item()
+    result['nc1'] = torch.sum((H_proj_PCA - H)**2).item() / len(H)
     del H_np, H_pca, pca_for_H
 
     try:

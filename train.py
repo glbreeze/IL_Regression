@@ -188,7 +188,7 @@ def main(args):
     wandb.watch(model, criterion, log="all", log_freq=20)
     for epoch in range(args.start_epoch, args.max_epoch):
         
-        if epoch == 0 or epoch%500 == 0: 
+        if epoch == 0 or epoch% args.log_freq == 0: 
             # === cosine between Wi's
             W = model.fc.weight.data  # [2, 512]
             WWT = (W @ W.T).cpu().numpy()
@@ -379,6 +379,7 @@ if __name__ == '__main__':
     parser.add_argument('--start_epoch', default=0, type=int, metavar='N',
                         help='manual epoch number (useful on restarts)')
     parser.add_argument('--save_freq', default=10, type=int)
+    parser.add_argument('--log_freq', default=20, type=int)
 
     parser.add_argument("--seed", type=int, default=2021, help="random seed")
     parser.add_argument('--exp_name', type=str, default='exp')

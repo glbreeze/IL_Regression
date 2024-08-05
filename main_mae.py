@@ -170,9 +170,9 @@ def main(args):
 
             # ================ NC2 ================
             WWT_normalized = WWT / np.linalg.norm(WWT)
-            W_outer = args.lambda_H * (Sigma_sqrt / np.sqrt(args.lambda_H * args.lambda_W) - np.eye(args.num_y))
             min_eigval = theory_stat['min_eigval']
             Sigma_sqrt = theory_stat['Sigma_sqrt']
+            W_outer = args.lambda_H * (Sigma_sqrt / np.sqrt(args.lambda_H * args.lambda_W) - np.eye(args.num_y))
 
             c_to_plot = np.linspace(0, min_eigval, num=1000)
             NC2_to_plot = []
