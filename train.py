@@ -101,7 +101,7 @@ def main(args):
     # ===================   whether to fix w   ===================
     if args.w == 'n' or args.w == 'null':
         pass
-    elif args.w in ['e', 'e1', 'e2' 'f', 'f1', 'f2', 'f3', 'o', 'a']: 
+    elif args.w in ['e', 'e1', 'e2', 'f', 'f1', 'f2', 'f3', 'o', 'a']: 
         if args.bias:
             model.fc.bias = nn.Parameter(torch.tensor(mu).to(device))
             model.fc.bias.requires_grad_(False)
@@ -109,36 +109,37 @@ def main(args):
         np.random.seed(2021)
         H = np.random.randn(model.fc.weight.shape[1], model.fc.weight.shape[1])
         Q, R = qr(H)
-        import pickle
-        with open(os.path.join(os.path.dirname(args.save_dir), args.save_w, 'fc_w.pkl'), 'rb') as f:
-            pretrained_dt = pickle.load(f)
-        
-        if args.w == 'f':
-            fixed_w = pretrained_dt['w']
-        elif args.w == 'f1': 
-            fixed_w = pretrained_dt['w'] @ Q
-        elif args.w == 'f2': 
-            WWT = pretrained_dt['w'] @ pretrained_dt['w'].T
-            eigenvalues, eigenvectors = np.linalg.eig(WWT)
-            fixed_w = eigenvectors @ np.diag(np.sqrt(eigenvalues)) @ eigenvectors.T @ Q[0:args.num_y,:]
-        elif args.w == 'f3': 
-            WWT = pretrained_dt['w'] @ pretrained_dt['w'].T
-            eigenvalues, eigenvectors = np.linalg.eig(WWT)
-            fixed_w = eigenvectors @ np.diag(np.sqrt(eigenvalues)) @ eigenvectors.T @ np.eye(model.fc.weight.shape[0], model.fc.weight.shape[1])
+        if args.w in ['f', 'f1', 'f2', 'f3']:
+            import pickle
+            with open(os.path.join(os.path.dirname(args.save_dir), args.save_w, 'fc_w.pkl'), 'rb') as f:
+                pretrained_dt = pickle.load(f)
             
-        elif args.w == 'e':
-            eigenvalues, eigenvectors = np.linalg.eig(Sigma_sqrt)
-            fixed_w = eigenvectors @ np.diag(np.sqrt(eigenvalues)) @ eigenvectors.T @ np.eye(model.fc.weight.shape[0], model.fc.weight.shape[1])
-        elif args.w == 'e1': 
-            eigenvalues, eigenvectors = np.linalg.eig(Sigma_sqrt)
-            fixed_w = eigenvectors @ np.diag(np.sqrt(eigenvalues)) @ eigenvectors.T @ Q[0:args.num_y,:]
-        elif args.w == 'e2': 
-            eigenvalues, eigenvectors = np.linalg.eig(W_outer)
-            fixed_w = eigenvectors @ np.diag(np.sqrt(eigenvalues)) @ eigenvectors.T @ np.eye(model.fc.weight.shape[0], model.fc.weight.shape[1])
-        elif args.w == 'o': 
-            fixed_w = Q[0:args.num_y,:]
-        elif args.w == 'a': 
-            fixed_w = matrix_with_angle(angle=np.pi/4)
+            if args.w == 'f':
+                fixed_w = pretrained_dt['w']
+            elif args.w == 'f1': 
+                fixed_w = pretrained_dt['w'] @ Q
+            elif args.w == 'f2': 
+                WWT = pretrained_dt['w'] @ pretrained_dt['w'].T
+                eigenvalues, eigenvectors = np.linalg.eig(WWT)
+                fixed_w = eigenvectors @ np.diag(np.sqrt(eigenvalues)) @ eigenvectors.T @ Q[0:args.num_y,:]
+            elif args.w == 'f3': 
+                WWT = pretrained_dt['w'] @ pretrained_dt['w'].T
+                eigenvalues, eigenvectors = np.linalg.eig(WWT)
+                fixed_w = eigenvectors @ np.diag(np.sqrt(eigenvalues)) @ eigenvectors.T @ np.eye(model.fc.weight.shape[0], model.fc.weight.shape[1])
+        else:
+            if args.w == 'e':
+                eigenvalues, eigenvectors = np.linalg.eig(Sigma_sqrt)
+                fixed_w = eigenvectors @ np.diag(np.sqrt(eigenvalues)) @ eigenvectors.T @ np.eye(model.fc.weight.shape[0], model.fc.weight.shape[1])
+            elif args.w == 'e1': 
+                eigenvalues, eigenvectors = np.linalg.eig(Sigma_sqrt)
+                fixed_w = eigenvectors @ np.diag(np.sqrt(eigenvalues)) @ eigenvectors.T @ Q[0:args.num_y,:]
+            elif args.w == 'e2': 
+                eigenvalues, eigenvectors = np.linalg.eig(W_outer)
+                fixed_w = eigenvectors @ np.diag(np.sqrt(eigenvalues)) @ eigenvectors.T @ np.eye(model.fc.weight.shape[0], model.fc.weight.shape[1])
+            elif args.w == 'o': 
+                fixed_w = Q[0:args.num_y,:]
+            elif args.w == 'a': 
+                fixed_w = matrix_with_angle(angle=np.pi/4)
             
             
         model.fc.weight = nn.Parameter(torch.tensor(fixed_w, dtype=torch.float32).to(device))
@@ -187,62 +188,60 @@ def main(args):
     wandb.watch(model, criterion, log="all", log_freq=20)
     for epoch in range(args.start_epoch, args.max_epoch):
         
-        # === cosine between Wi's
-        W = model.fc.weight.data  # [2, 512]
-        WWT = (W @ W.T).cpu().numpy()
+        if epoch == 0 or epoch%500 == 0: 
+            # === cosine between Wi's
+            W = model.fc.weight.data  # [2, 512]
+            WWT = (W @ W.T).cpu().numpy()
 
-        # ===============compute train mse and projection error==================
-        all_feats, preds, labels = get_feat_pred(model, train_loader)
-        if args.y_norm not in ['null', 'n']:
-            y_shift, std = torch.tensor(train_loader.dataset.y_shift).to(preds.device), torch.tensor(train_loader.dataset.std).to(preds.device)
-            preds = preds @ std + y_shift
-            labels = labels @ std + y_shift
-        if preds.shape[-1] == 2:
-            train_loss0 = torch.sum((preds[:,0] - labels[:,0])**2)/preds.shape[0]
-            train_loss1 = torch.sum((preds[:,1] - labels[:,1])**2)/preds.shape[0]
+            # ===============compute train mse and projection error==================
+            all_feats, preds, labels = get_feat_pred(model, train_loader)
+            if args.y_norm not in ['null', 'n']:
+                y_shift, std = torch.tensor(train_loader.dataset.y_shift).to(preds.device), torch.tensor(train_loader.dataset.std).to(preds.device)
+                preds = preds @ std + y_shift
+                labels = labels @ std + y_shift
+            if preds.shape[-1] == 2:
+                train_loss0 = torch.sum((preds[:,0] - labels[:,0])**2)/preds.shape[0]
+                train_loss1 = torch.sum((preds[:,1] - labels[:,1])**2)/preds.shape[0]
             train_loss = criterion(preds, labels)
-        else: 
-            train_loss = torch.sum((preds.flatten()-labels.flatten())**2)/len(preds)
-        nc_train = compute_metrics(W, all_feats)
-        train_hnorm = torch.norm(all_feats, p=2, dim=1).mean().item()
-        train_wnorm = torch.norm(W, p=2, dim=1).mean().item()
+            
+            nc_train = compute_metrics(W, all_feats)
+            train_hnorm = torch.norm(all_feats, p=2, dim=1).mean().item()
+            train_wnorm = torch.norm(W, p=2, dim=1).mean().item()
 
-        # ===============compute val mse and projection error==================
-        all_feats, preds, labels = get_feat_pred(model, val_loader)
-        if args.y_norm not in ['null', 'n']:
-            y_shift, std = torch.tensor(train_loader.dataset.y_shift).to(preds.device), torch.tensor(train_loader.dataset.std).to(preds.device)
-            preds = preds @ std + y_shift
-            labels = labels @ std + y_shift
-        if preds.shape[-1] == 2: 
-            val_loss0 = torch.sum((preds[:,0] - labels[:,0])**2)/preds.shape[0]
-            val_loss1 = torch.sum((preds[:,1] - labels[:,1])**2)/preds.shape[0]
+            # ===============compute val mse and projection error==================
+            all_feats, preds, labels = get_feat_pred(model, val_loader)
+            if args.y_norm not in ['null', 'n']:
+                y_shift, std = torch.tensor(train_loader.dataset.y_shift).to(preds.device), torch.tensor(train_loader.dataset.std).to(preds.device)
+                preds = preds @ std + y_shift
+                labels = labels @ std + y_shift
+            if preds.shape[-1] == 2: 
+                val_loss0 = torch.sum((preds[:,0] - labels[:,0])**2)/preds.shape[0]
+                val_loss1 = torch.sum((preds[:,1] - labels[:,1])**2)/preds.shape[0]
             val_loss = criterion(preds, labels)
-        else: 
-            val_loss = torch.sum((preds.flatten()-labels.flatten())**2)/len(preds)
-        nc_val = compute_metrics(W, all_feats)
-        val_hnorm = torch.norm(all_feats, p=2, dim=1).mean().item()
-        del all_feats, preds, labels
+            
+            nc_val = compute_metrics(W, all_feats)
+            val_hnorm = torch.norm(all_feats, p=2, dim=1).mean().item()
+            del all_feats, preds, labels
 
-        nc_dt = {
-            'ww00': WWT[0, 0].item(),
-            'ww01': WWT[0, 1].item() if args.num_y == 2 else 0,
-            'ww11': WWT[1, 1].item() if args.num_y == 2 else 0 ,
-            'w_cos': F.cosine_similarity(W[0], W[1], dim=0).item() if args.num_y == 2 else 0,
-            'train_mse': train_loss,
-            'train_nc1': nc_train['nc1'],
-            'train_nc3': nc_train['nc3'],
-            'train_nc3a': nc_train['nc3a'],
-            'val_mse': val_loss,
-            'val_nc1': nc_val['nc1'],
-            'val_nc3': nc_val['nc3'],
-            'val_nc3a': nc_val['nc3a'],
-            'train_hnorm': train_hnorm,
-            'train_wnorm': train_wnorm,
-            'val_hnorm': val_hnorm, 
-        }
+            nc_dt = {
+                'ww00': WWT[0, 0].item(),
+                'ww01': WWT[0, 1].item() if args.num_y == 2 else 0,
+                'ww11': WWT[1, 1].item() if args.num_y == 2 else 0 ,
+                'w_cos': F.cosine_similarity(W[0], W[1], dim=0).item() if args.num_y == 2 else 0,
+                'train_mse': train_loss,
+                'train_nc1': nc_train['nc1'],
+                'train_nc3': nc_train['nc3'],
+                'train_nc3a': nc_train['nc3a'],
+                'val_mse': val_loss,
+                'val_nc1': nc_val['nc1'],
+                'val_nc3': nc_val['nc3'],
+                'val_nc3a': nc_val['nc3a'],
+                'train_hnorm': train_hnorm,
+                'train_wnorm': train_wnorm,
+                'val_hnorm': val_hnorm, 
+            }
 
-        # ================ NC2 ================
-        if epoch == 0 or epoch%1 == 0: 
+            # ================ NC2 ================
             WWT_normalized = WWT / np.linalg.norm(WWT)
             min_eigval = theory_stat['min_eigval']
             Sigma_sqrt = theory_stat['Sigma_sqrt']
@@ -251,7 +250,7 @@ def main(args):
             NC2_to_plot = []
             for c in c_to_plot:
                 c_sqrt = c ** 0.5
-                A = Sigma_sqrt - c_sqrt * np.eye(2)
+                A = Sigma_sqrt - c_sqrt * np.eye(Sigma_sqrt.shape[0])
                 A_normalized = A / np.linalg.norm(A)
                 diff_mat = WWT_normalized - A_normalized
                 NC2_to_plot.append(np.linalg.norm(diff_mat))
@@ -269,7 +268,7 @@ def main(args):
             nc_dt['nc2'] = min(NC2_to_plot)
             # nc_tracker.load_dt(nc_dt, epoch=epoch)
 
-        # ================ log to wandb ================
+            # ================ log to wandb ================
             wandb.log(
                 {'train/train_nc1': nc_dt['train_nc1'],
                 'train/train_nc3': nc_dt['train_nc3'],
@@ -300,7 +299,7 @@ def main(args):
                 'other/wnorm': nc_dt['train_wnorm']
                 },
                 step=epoch)
-            if args.which_y == -1:
+            if args.which_y == -1 and args.num_y == 2:
                 wandb.log({'train/train_mse0': train_loss0,'train/train_mse1': train_loss1, 
                             'val/val_mse0': val_loss0,'val/val_mse1': val_loss1}, step=epoch)
             elif args.which_y == 0:
@@ -309,11 +308,11 @@ def main(args):
                 wandb.log({'train/train_mse1': train_loss, 'val/val_mse1': val_loss}, step=epoch)
 
 
-        log('Epoch {}/{}, runnning train mse: {:.4f}, ww00: {:.4f}, ww01: {:.4f}, ww11: {:.4f}'.format(
-            epoch, args.max_epoch, train_loss, nc_dt['ww00'], nc_dt['ww01'], nc_dt['ww11']
-        ))
+            log('Epoch {}/{}, runnning train mse: {:.4f}, ww00: {:.4f}, ww01: {:.4f}, ww11: {:.4f}'.format(
+                epoch, args.max_epoch, train_loss, nc_dt['ww00'], nc_dt['ww01'], nc_dt['ww11']
+            ))
 
-        if epoch == 0 or epoch % args.save_freq == 0:
+        if (epoch == 0 or epoch % args.save_freq == 0) and args.save_freq > 0:
             ckpt_path = os.path.join(args.save_dir, 'ep{}_ckpt.pth'.format(epoch))
             torch.save({
                 'epoch': epoch,

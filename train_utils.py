@@ -12,9 +12,13 @@ def get_scheduler(args, optimizer):
     :param batches: the number of iterations in each epochs
     :return: scheduler
     """
-
+    if args.max_epoch<=1000: 
+        milestones=[150, 300]
+    else: 
+        milestones=[args.max_epoch*0.3, args.max_epoch*0.6]
+        
     SCHEDULERS = {
-        'multi_step': optim.lr_scheduler.MultiStepLR(optimizer, milestones=[150, 300], gamma=0.2),
+        'multi_step': optim.lr_scheduler.MultiStepLR(optimizer, milestones=milestones, gamma=0.2),
         'cosine': optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.max_epoch),
     }
     return SCHEDULERS[args.scheduler]
@@ -57,15 +61,19 @@ def compute_cosine_norm(W):
 
 
 def gram_schmidt(W):
-    if W.shape[0] == 2: 
-        U = torch.empty_like(W)
-        U[0, :] = W[0, :] / torch.norm(W[0, :], p=2)
+    dim = W.shape[0]
 
-        proj = torch.dot(U[0, :], W[1, :]) * U[0, :]
-        ortho_vector = W[1, :] - proj
-        U[1, :] = ortho_vector / torch.norm(ortho_vector, p=2)
-    elif W.shape[0] == 1: 
-        U = W / torch.norm(W, p=2)
+    U = torch.empty_like(W)
+    U[0, :] = W[0, :] / torch.norm(W[0, :], p=2)
+
+    for i in range(1, dim):
+        j = i - 1
+        ortho_vector = W[i, :]
+        while j >= 0:
+            proj = torch.dot(U[j, :], W[i, :]) * U[j, :]
+            ortho_vector -= proj
+            j -= 1
+        U[i, :] = ortho_vector / torch.norm(ortho_vector, p=2)
 
     return U
 
