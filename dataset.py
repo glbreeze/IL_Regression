@@ -6,7 +6,7 @@ from PIL import Image
 import torch
 from torch.utils.data import Dataset
 from torch.utils.data import DataLoader
-from torchvision import transforms
+from torchvision import transforms, datasets
 
 DATA_FOLDER = '../dataset/mujoco_data/'
 
@@ -17,6 +17,15 @@ def get_dataloader(args):
         train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=4, pin_memory=True, persistent_workers=True)
         val_dataset = SubDataset('/vast/lg154/Carla_JPG/Val/val_list.txt', '/vast/lg154/Carla_JPG/Val/sub_targets.pkl', transform=transform, dim=args.num_y)
         val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=4, pin_memory=True, persistent_workers=True)
+    elif args.dataset == 'mnist': 
+        transform=transforms.Compose([
+                           transforms.ToTensor(),
+                           transforms.Normalize((0.1307,), (0.3081,))
+                       ])
+        trainset = datasets.MNIST(root='../dataset', train=True, download=True, transform=transform)
+        train_loader = DataLoader(trainset, batch_size=args.batch_size, shuffle=True, num_workers=4, pin_memory=True, persistent_workers=True)
+        testset = datasets.MNIST(root='../dataset', train=False, download=True, transform=transform)
+        test_loader = DataLoader(testset, batch_size=args.batch_size, shuffle=False, num_workers=4, pin_memory=True, persistent_workers=True)
 
     elif args.dataset in ["swimmer", 'reacher', 'hopper']:
         train_dataset = MujocoBuffer(data_folder=DATA_FOLDER,

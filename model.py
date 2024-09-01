@@ -14,56 +14,19 @@ class RegressionResNet(nn.Module):
             resnet_model = models.resnet18(pretrained=pretrained)
         elif args.arch == 'resnet50' or args.arch == 'res50':
             resnet_model = models.resnet50(pretrained=pretrained)
+        
+        if args.dset in ['fmnist']:
+            conv1_out_ch = resnet_model.conv1.out_channels
+            resnet_model.conv1 = nn.Conv2d(1, conv1_out_ch, kernel_size=3, stride=1, padding=1, bias=False)  # Small dataset filter size used by He et al. (2015)  
+            resnet_model.maxpool = nn.Identity()
+            
         self.backbone = nn.Sequential(*list(resnet_model.children())[:-2])
         
-        if self.args.feat == 'b': 
+        if self.args.feat == 'f':    # without GAP 
             self.feat = nn.Sequential(
                 nn.AdaptiveAvgPool2d(output_size=(1, 1)), 
-                nn.Flatten(),
-                nn.BatchNorm1d(resnet_model.fc.in_features, affine=False)
-                )
-        elif self.args.feat == 'bf': 
-            self.feat = nn.Sequential(
-                nn.AdaptiveAvgPool2d(output_size=(1, 1)),
-                nn.Flatten(),
-                nn.BatchNorm1d(resnet_model.fc.in_features, affine=False), 
+                nn.Flatten(), 
                 nn.Linear(resnet_model.fc.in_features, resnet_model.fc.in_features)
-                )
-        elif self.args.feat == 'fbg':
-            self.feat = nn.Sequential(
-                nn.AdaptiveAvgPool2d(output_size=(1, 1)),
-                nn.Flatten(),
-                nn.Linear(resnet_model.fc.in_features, resnet_model.fc.in_features),
-                nn.BatchNorm1d(resnet_model.fc.in_features, affine=True),
-                nn.GELU()
-            )
-        elif self.args.feat == 'bft': 
-            self.feat = nn.Sequential(
-                nn.AdaptiveAvgPool2d(output_size=(1, 1)),
-                nn.Flatten(),
-                nn.BatchNorm1d(resnet_model.fc.in_features, affine=False), 
-                nn.Linear(resnet_model.fc.in_features, resnet_model.fc.in_features), 
-                nn.Tanh()
-                )
-        elif self.args.feat == 'bfrf': 
-            self.feat = nn.Sequential(
-                nn.AdaptiveAvgPool2d(output_size=(1, 1)),
-                nn.Flatten(),
-                nn.BatchNorm1d(resnet_model.fc.in_features, affine=False), 
-                nn.Linear(resnet_model.fc.in_features, resnet_model.fc.in_features), 
-                nn.ReLU(), 
-                nn.Linear(resnet_model.fc.in_features, resnet_model.fc.in_features), 
-                )
-        elif self.args.feat == 'f':    # without GAP 
-            self.feat = nn.Sequential(
-                nn.Flatten(), 
-                nn.Linear(resnet_model.fc.in_features * 7 * 7, resnet_model.fc.in_features)
-            )
-        elif self.args.feat == 'ft':    # without GAP 
-            self.feat = nn.Sequential(
-                nn.Flatten(), 
-                nn.Linear(resnet_model.fc.in_features * 7 * 7, resnet_model.fc.in_features),
-                nn.Tanh()
             )
         else: 
             self.feat = nn.Sequential(

@@ -271,7 +271,7 @@ def main(args):
             elif args.which_y == 1:
                 wandb.log({'mse/train_mse1': train_loss, 'mse/val_mse1': val_loss}, step=epoch)
 
-        if (epoch == 0 or epoch % args.save_freq == 0) and args.save_freq > 0:
+        if (epoch == 0 or (epoch+1) % args.save_freq == 0) and args.save_freq > 0:
             ckpt_path = os.path.join(args.save_dir, 'ep{}_ckpt.pth'.format(epoch))
             torch.save({
                 'epoch': epoch,
