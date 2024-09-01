@@ -12,16 +12,11 @@ def get_scheduler(args, optimizer):
     :param batches: the number of iterations in each epochs
     :return: scheduler
     """
-    if args.max_epoch<=1000: 
-        milestones=[150, 300]
-    else: 
-        milestones=[args.max_epoch*0.5, args.max_epoch*1.0]
         
-    SCHEDULERS = {
-        'multi_step': optim.lr_scheduler.MultiStepLR(optimizer, milestones=milestones, gamma=0.2),
-        'cosine': optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.max_epoch),
-    }
-    return SCHEDULERS[args.scheduler]
+    if args.scheduler in ['ms', 'multi_step']:
+        return optim.lr_scheduler.MultiStepLR(optimizer, milestones=[args.max_epoch//4, args.max_epoch//2], gamma=0.2)
+    elif args.scheduler in ['cos', 'cosine']:
+        return optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.max_epoch)
 
 
 def get_feat_pred(model, loader):
@@ -81,45 +76,45 @@ def gram_schmidt(W):
 # ============== NC metrics ==============
 def compute_metrics(W, H, y_dim=None):
     result = {}
+    H_row_norms = torch.norm(H, dim=1, keepdim=True)
+    H_normalized = H / H_row_norms
 
     if y_dim == None:
         y_dim = W.shape[0]
 
     # NC1
     H_np = H.cpu().numpy()
-    pca_for_H = PCA(n_components=y_dim)
+    pca_for_H = PCA(n_components=max(y_dim, 5))
     try:
         pca_for_H.fit(H_np)
     except Exception as e:
         print(e)
-        result['nc1'] = -1
-    else:
-        H_pca = pca_for_H.components_[:y_dim, :]  # First two principal components [2,5]
 
-    # NRC1 with Gram-Schmidt
-    H_pca = torch.tensor(H_pca, device=H.device)
+    H_pca = torch.tensor(pca_for_H.components_[:max(y_dim, 5), :], device=H.device)  # First two principal components [2,5]
     H_U = gram_schmidt(H_pca)
-    H_P = torch.mm(H_U.T, H_U)
-    H_proj_PCA = torch.mm(H, H_P)
-    result['nc1'] = torch.sum((H_proj_PCA - H)**2).item() / len(H)
-    del H_np, H_pca, pca_for_H
+    for k in range(max(y_dim, 5)):
+        P_H = H_U[:k + 1, :].T @ H_U[:k + 1, :]
+        result[f'nc1_pc{k + 1}'] = torch.sum((H @ P_H - H) ** 2).item() / len(H)
+        result[f'nc1n_pc{k + 1}'] = torch.mean(torch.norm(H_normalized @ P_H - H_normalized, p=2, dim=1) ** 2).item()
+        result[f'EVR{k + 1}'] = pca_for_H.explained_variance_ratio_[k]
+
+    result['nc1'] = result[f'nc1_pc{y_dim}']
+    result['nc1n'] = result[f'nc1n_pc{y_dim}']
 
     try:
         inverse_mat = torch.inverse(W @ W.T)
     except Exception as e:
         print(e)
-        result['nc3'] = -1
-    else:
-        H_proj_W = (W.T @ inverse_mat @ W @ H.T).T
-        result['nc3'] = torch.sum((H-H_proj_W)**2).item() / len(H)
-        del H_proj_W
+    P_W = W.T @ inverse_mat @ W
+    result['nc2'] = torch.sum((H - H @ P_W)**2).item() / len(H)
+    result['nc2n'] = torch.mean(torch.norm(H_normalized @ P_W - H_normalized, p=2, dim=1) ** 2).item()
 
     # Projection error with Gram-Schmidt
-    U = gram_schmidt(W)
-    P_E = torch.mm(U.T, U)
-    H_proj = torch.mm(H, P_E)
-    result['nc3a'] = torch.sum((H_proj-H)**2).item() / len(H)
-    del H_proj
+    # U = gram_schmidt(W)
+    # P_E = torch.mm(U.T, U)
+    # H_proj = torch.mm(H, P_E)
+    # result['nc3a'] = torch.sum((H_proj-H)**2).item() / len(H)
+    # del H_proj
 
     return result
 
@@ -178,7 +173,8 @@ class Train_Vars:
                 print('{} is not attribute of Graph var'.format(key))
 
 
-def get_theoretical_solution(train_loader, args, bias=None, all_labels=None, center=False):
+def get_theoretical_solution(train_loader, args, all_labels=None, center=False):
+    # if label not given, get all target label from data loader.
     if all_labels is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         all_labels = []
@@ -188,17 +184,10 @@ def get_theoretical_solution(train_loader, args, bias=None, all_labels=None, cen
                 all_labels.append(target)
             all_labels = torch.cat(all_labels)   # [N, 2]
 
-    if bias is not None:
-        center_labels = all_labels - bias  # [N,2] - [2]
-    else:
-        center_labels = all_labels
+    mu = torch.mean(all_labels, dim=0)
     if center:
-        mu = torch.mean(all_labels, dim=0)
-        center_labels = all_labels - mu
-    else:
-        mu = torch.mean(all_labels, dim=0)
-        center_labels = all_labels
-    Sigma = torch.matmul(center_labels.T, center_labels)/len(center_labels)
+        all_labels = all_labels - mu
+    Sigma = (all_labels.T @ all_labels)/len(all_labels)
     Sigma = Sigma.cpu().numpy()
 
     if args.num_y >= 2:
@@ -211,7 +200,6 @@ def get_theoretical_solution(train_loader, args, bias=None, all_labels=None, cen
         Sigma_sqrt = np.sqrt(Sigma)
         min_eigval, max_eigval = Sigma_sqrt, Sigma_sqrt
 
-    W_outer = args.lambda_H * (Sigma_sqrt/np.sqrt(args.lambda_H*args.lambda_W) - np.eye(args.num_y))
     theory_stat = {
             'mu': mu.cpu().numpy(), 
             'Sigma': Sigma, 
@@ -219,4 +207,4 @@ def get_theoretical_solution(train_loader, args, bias=None, all_labels=None, cen
             'min_eigval': min_eigval,
             'max_eigval': max_eigval,
         }
-    return W_outer, mu.cpu().numpy(), Sigma_sqrt, all_labels, theory_stat  # all_labels is still tensor
+    return theory_stat

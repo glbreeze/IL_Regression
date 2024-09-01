@@ -71,16 +71,16 @@ def main(args):
     os.environ["WANDB_ARTIFACT_DIR"] = "/scratch/lg154/sseg/wandb"
     os.environ["WANDB_DATA_DIR"] = "/scratch/lg154/sseg/wandb/data"
     wandb.login(key='0c0abb4e8b5ce4ee1b1a4ef799edece5f15386ee')
-    wandb.init(project='NRC_rebuttal',# + args.dataset,
+    wandb.init(project='NRC_sep',# + args.dataset,
                name=args.exp_name.split('/')[-1]
                )
     wandb.config.update(args)
 
     # =================== theoretical solution ================
-    W_outer, mu, Sigma_sqrt, all_labels, theory_stat = get_theoretical_solution(train_loader, args, bias=None,
-                                                                                all_labels=None, center=args.bias)
-    if args.dataset in ['swimmer', 'reacher']:
+    if args.dataset in ['swimmer', 'reacher', 'hopper']:
         theory_stat = train_loader.dataset.get_theory_stats(center=args.bias)
+    else:
+        theory_stat = get_theoretical_solution(train_loader, args, center=args.bias)
 
     # ===================    Load model   ===================
     if args.arch.startswith('res'):
@@ -99,11 +99,9 @@ def main(args):
         log("--- classification layer DO NOT have bias terms. ---")
 
     # ===================   whether to fix w   ===================
-    if args.w == 'n' or args.w == 'null':
-        pass
-    elif args.w in ['e', 'e1', 'e2', 'f', 'f1', 'f2', 'f3', 'o', 'a']: 
+    if args.w in ['e', 'e1', 'e2', 'f', 'f1', 'f2', 'f3', 'o', 'a']:
         if args.bias:
-            model.fc.bias = nn.Parameter(torch.tensor(mu).to(device))
+            model.fc.bias = nn.Parameter(torch.tensor(theory_stat['mu']).to(device))
             model.fc.bias.requires_grad_(False)
             
         np.random.seed(2021)
@@ -128,19 +126,18 @@ def main(args):
                 fixed_w = eigenvectors @ np.diag(np.sqrt(eigenvalues)) @ eigenvectors.T @ np.eye(model.fc.weight.shape[0], model.fc.weight.shape[1])
         else:
             if args.w == 'e':
-                eigenvalues, eigenvectors = np.linalg.eig(Sigma_sqrt)
+                eigenvalues, eigenvectors = np.linalg.eig(theory_stat['Sigma_sqrt'])
                 fixed_w = eigenvectors @ np.diag(np.sqrt(eigenvalues)) @ eigenvectors.T @ np.eye(model.fc.weight.shape[0], model.fc.weight.shape[1])
             elif args.w == 'e1': 
-                eigenvalues, eigenvectors = np.linalg.eig(Sigma_sqrt)
+                eigenvalues, eigenvectors = np.linalg.eig(theory_stat['Sigma_sqrt'])
                 fixed_w = eigenvectors @ np.diag(np.sqrt(eigenvalues)) @ eigenvectors.T @ Q[0:args.num_y,:]
             elif args.w == 'e2': 
-                eigenvalues, eigenvectors = np.linalg.eig(W_outer)
+                eigenvalues, eigenvectors = np.linalg.eig(theory_stat['Sigma_sqrt'])
                 fixed_w = eigenvectors @ np.diag(np.sqrt(eigenvalues)) @ eigenvectors.T @ np.eye(model.fc.weight.shape[0], model.fc.weight.shape[1])
             elif args.w == 'o': 
                 fixed_w = Q[0:args.num_y,:]
             elif args.w == 'a': 
                 fixed_w = matrix_with_angle(angle=np.pi/4)
-            
             
         model.fc.weight = nn.Parameter(torch.tensor(fixed_w, dtype=torch.float32).to(device))
         model.fc.weight.requires_grad_(False)
@@ -154,8 +151,6 @@ def main(args):
     scheduler = get_scheduler(args, optimizer)
     if args.warmup>0: 
         warmup_scheduler = LambdaLR(optimizer, lr_lambda=lambda epoch: (epoch + 1) / args.warmup)
-        
-    # lambda0 = lambda epoch: epoch / args.warmup if epoch < args.warmup else 1 * 0.2**((epoch-800)//100)
 
     if args.resume:
         if os.path.isfile(args.resume):
@@ -169,22 +164,8 @@ def main(args):
         else:
             print("=> no checkpoint found at '{}'".format(args.resume))
 
-    # ================== log the theoretical result  ==================
-    if False: 
-        filename = os.path.join(args.save_dir, 'theory.pkl')
-        with open(filename, 'wb') as f:
-            pickle.dump({'target':all_labels.cpu().numpy(), 'W_outer':W_outer, 'lambda_H':args.lambda_H, 'lambda_W':args.lambda_W}, f)
-            log('--store theoretical result to {}'.format(filename))
-    log('====> Theoretical Sigma_sqrt:' + ' '.join(f'{value:.4f}' for value in Sigma_sqrt.flatten()))
-    log('====> Theoretical WWT:' + ' '.join(f'{value:.4f}' for value in W_outer.flatten()))
-    log('----> Theoretical mu:' + ' '.join(f'{value:.4f}' for value in theory_stat['mu'].flatten())
-        + ';\t' + 'Sigma:' + ' '.join(f'{value:.4f}' for value in theory_stat['Sigma'].flatten())
-        + ';\t' + 'Sigma_sqrt:' + ' '.join(f'{value:.4f}' for value in theory_stat['Sigma_sqrt'].flatten())
-        )
-
     # ================== Training ==================
     criterion = nn.MSELoss()
-    nc_tracker = Graph_Vars(dim=args.num_y)
     wandb.watch(model, criterion, log="all", log_freq=20)
     for epoch in range(args.start_epoch, args.max_epoch):
         
@@ -223,94 +204,72 @@ def main(args):
             val_hnorm = torch.norm(all_feats, p=2, dim=1).mean().item()
             del all_feats, preds, labels
 
-            nc_dt = {
-                'ww00': WWT[0, 0].item(),
-                'ww01': WWT[0, 1].item() if args.num_y == 2 else 0,
-                'ww11': WWT[1, 1].item() if args.num_y == 2 else 0 ,
-                'w_cos': F.cosine_similarity(W[0], W[1], dim=0).item() if args.num_y == 2 else 0,
-                'train_mse': train_loss,
-                'train_nc1': nc_train['nc1'],
-                'train_nc3': nc_train['nc3'],
-                'train_nc3a': nc_train['nc3a'],
-                'val_mse': val_loss,
-                'val_nc1': nc_val['nc1'],
-                'val_nc3': nc_val['nc3'],
-                'val_nc3a': nc_val['nc3a'],
-                'train_hnorm': train_hnorm,
-                'train_wnorm': train_wnorm,
-                'val_hnorm': val_hnorm, 
-            }
-
             # ================ NC2 ================
             WWT_normalized = WWT / np.linalg.norm(WWT)
             min_eigval = theory_stat['min_eigval']
             Sigma_sqrt = theory_stat['Sigma_sqrt']
+            W_outer = args.lambda_H * (Sigma_sqrt / np.sqrt(args.lambda_H * args.lambda_W) - np.eye(args.num_y))
 
             c_to_plot = np.linspace(0, min_eigval, num=1000)
-            NC2_to_plot = []
+            NC3_to_plot = []
             for c in c_to_plot:
                 c_sqrt = c ** 0.5
                 A = Sigma_sqrt - c_sqrt * np.eye(Sigma_sqrt.shape[0])
                 A_normalized = A / np.linalg.norm(A)
                 diff_mat = WWT_normalized - A_normalized
-                NC2_to_plot.append(np.linalg.norm(diff_mat))
+                NC3_to_plot.append(np.linalg.norm(diff_mat))
 
-            data = [[a, b] for (a, b) in zip(c_to_plot, NC2_to_plot)]
-            table = wandb.Table(data=data, columns=["c", "NC2"])
+            data = [[a, b] for (a, b) in zip(c_to_plot, NC3_to_plot)]
+            table = wandb.Table(data=data, columns=["c", "NC3"])
             wandb.log(
-                {
-                    "NC2(c)": wandb.plot.line(
-                        table, "c", "NC2", title="NC2 as a Function of c"
-                    )
-                }, step=epoch
-            )
-            best_c = c_to_plot[np.argmin(NC2_to_plot)]
-            nc_dt['nc2'] = min(NC2_to_plot)
-            # nc_tracker.load_dt(nc_dt, epoch=epoch)
+                {"NC3(c)": wandb.plot.line(table, "c", "NC3", title="NC3 as a Function of c")},
+                step=epoch)
+            best_c = c_to_plot[np.argmin(NC3_to_plot)]
+            NC3 = min(NC3_to_plot)
 
             # ================ log to wandb ================
-            wandb.log(
-                {'train/train_nc1': nc_dt['train_nc1'],
-                'train/train_nc3': nc_dt['train_nc3'],
-                'train/train_nc3a': nc_dt['train_nc3a'],
-                'train/train_mse': train_loss,
+            nc_dt = {
+                'train/train_nc1': nc_train['nc1'],
+                'train/train_nc1n': nc_train['nc1n'],
+                'train/train_nc2': nc_train['nc2'],
+                'train/train_nc2n': nc_train['nc2n'],
+                'train/train_nc3': NC3,
+                'train/best_c': best_c,
 
-                'val/val_mse': val_loss,
-                'val/val_nc1': nc_dt['val_nc1'],
-                'val/val_nc3': nc_dt['val_nc3'],
-                'val/val_nc3a': nc_dt['val_nc3a'],
+                'EVR/EVR1': nc_train['EVR1'],
+                'EVR/EVR2': nc_train['EVR2'],
+                'EVR/EVR3': nc_train['EVR3'],
+                'EVR/EVR4': nc_train['EVR4'],
+                'EVR/EVR5': nc_train['EVR5'],
 
-                'W/ww00': nc_dt['ww00'],
-                'W/ww01': nc_dt['ww01'],
-                'W/ww11': nc_dt['ww11'],
-                'W/w_cos': nc_dt['w_cos'],
-                'W/nc2': nc_dt['nc2'],
-                'W/best_c': best_c, 
-                
-                'NC2/ww00_d': abs(nc_dt['ww00'] - W_outer[0, 0])/(abs(W_outer[0, 0])+1e-8),
-                'NC2/ww01_d': abs(nc_dt['ww01'] - W_outer[0, 1])/(abs(W_outer[0, 1])+1e-8) if args.num_y == 2 else 0,
-                'NC2/ww11_d': abs(nc_dt['ww11'] - W_outer[1, 1])/(abs(W_outer[1, 1])+1e-8) if args.num_y == 2 else 0,
-                'NC2/ww_d': np.sum( (WWT/np.linalg.norm(WWT) -W_outer/np.linalg.norm(W_outer))**2 ),
-                'NC2/ww_d1': np.sum( ((WWT -W_outer)/np.linalg.norm(W_outer))**2 ),
-                
+                'NC1/nc1_pc1': nc_train['nc1_pc1'],
+                'NC1/nc1_pc2': nc_train['nc1_pc2'],
+                'NC1/nc1_pc3': nc_train['nc1_pc3'],
+                'NC1/nc1_pc4': nc_train['nc1_pc4'],
+                'NC1/nc1_pc5': nc_train['nc1_pc5'],
+
+                'val/val_nc1': nc_val['nc1'],
+                'val/val_nc1n': nc_val['nc1n'],
+                'val/val_nc2': nc_val['nc2'],
+                'val/val_nc2n': nc_val['nc2n'],
+
                 'other/lr': optimizer.param_groups[0]['lr'],
-                'other/train_hnorm': nc_dt['train_hnorm'],
-                'other/val_hnorm': nc_dt['val_hnorm'],
-                'other/wnorm': nc_dt['train_wnorm']
-                },
-                step=epoch)
+                'other/train_hnorm': train_hnorm,
+                'other/val_hnorm': val_hnorm,
+                'other/wnorm': train_wnorm,
+
+                'mse/train_mse': train_loss,
+                'mse/val_mse': val_loss,
+            }
+
+            wandb.log(nc_dt, step=epoch)
             if args.which_y == -1 and args.num_y == 2:
-                wandb.log({'train/train_mse0': train_loss0,'train/train_mse1': train_loss1, 
-                            'val/val_mse0': val_loss0,'val/val_mse1': val_loss1}, step=epoch)
+                wandb.log({'mse/train_mse0': train_loss0, 'mse/val_mse0': val_loss0,
+                           'mse/train_mse1': train_loss1, 'mse/val_mse1': val_loss1}, step=epoch)
             elif args.which_y == 0:
-                wandb.log({'train/train_mse0': train_loss, 'val/val_mse0': val_loss}, step=epoch)
+                wandb.log({'mse/train_mse0': train_loss, 'mse/val_mse0': val_loss}, step=epoch)
             elif args.which_y == 1:
-                wandb.log({'train/train_mse1': train_loss, 'val/val_mse1': val_loss}, step=epoch)
-
-
-            log('Epoch {}/{}, runnning train mse: {:.4f}, ww00: {:.4f}, ww01: {:.4f}, ww11: {:.4f}'.format(
-                epoch, args.max_epoch, train_loss, nc_dt['ww00'], nc_dt['ww01'], nc_dt['ww11']
-            ))
+                wandb.log({'mse/train_mse1': train_loss, 'mse/val_mse1': val_loss}, step=epoch)
 
         if (epoch == 0 or epoch % args.save_freq == 0) and args.save_freq > 0:
             ckpt_path = os.path.join(args.save_dir, 'ep{}_ckpt.pth'.format(epoch))
@@ -345,6 +304,7 @@ def set_seed(SEED=666):
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Regression NC")
     parser.add_argument('--dataset', type=str, default='Carla')
@@ -359,7 +319,6 @@ if __name__ == '__main__':
     parser.add_argument('--w', type=str, default='null')
     parser.add_argument('--bn', type=str, default='f') # f|t|p false|true|parametric
     parser.add_argument('--init_s', type=float, default='1.0')
-    
 
     parser.add_argument('--max_epoch', type=int, default=1000)
     parser.add_argument('--batch_size', type=int, default=64)
