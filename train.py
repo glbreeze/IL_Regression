@@ -26,9 +26,8 @@ def train_one_epoch(model, data_loader, optimizer, criterion, args):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     running_loss = 0.0
     all_feats = []
-    for batch_idx, batch in enumerate(data_loader):
-        images = batch['input'].to(device, non_blocking=True)
-        targets = batch['target'].to(device, non_blocking=True)
+    for batch_idx, (images, targets) in enumerate(data_loader):
+        images, targets = images.to(device, non_blocking=True), targets.to(device, non_blocking=True)
         if targets.ndim == 1: 
             targets = targets.unsqueeze(1)
         optimizer.zero_grad()
@@ -61,6 +60,8 @@ def main(args):
             args.num_y = train_loader.dataset.action_dim
         else:
             args.num_y = 1
+    elif args.dataset in ['mnist']:
+        args.num_y = 1
             
     # ================== setup wandb  ==================
 

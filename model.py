@@ -15,7 +15,7 @@ class RegressionResNet(nn.Module):
         elif args.arch == 'resnet50' or args.arch == 'res50':
             resnet_model = models.resnet50(pretrained=pretrained)
         
-        if args.dset in ['fmnist']:
+        if args.dataset in ['mnist']:
             conv1_out_ch = resnet_model.conv1.out_channels
             resnet_model.conv1 = nn.Conv2d(1, conv1_out_ch, kernel_size=3, stride=1, padding=1, bias=False)  # Small dataset filter size used by He et al. (2015)  
             resnet_model.maxpool = nn.Identity()
@@ -37,7 +37,6 @@ class RegressionResNet(nn.Module):
         self.fc = nn.Linear(resnet_model.fc.in_features, num_outputs, bias=args.bias)
         if self.args.init_s > 0 and self.args.init_s != 1:
             self.fc.weight.data = self.fc.weight.data * self.args.init_s
-        self.global_avg_pool = nn.AdaptiveAvgPool2d((1, 1))
     
     def forward(self, x, ret_feat=False):
         x = self.backbone(x)
