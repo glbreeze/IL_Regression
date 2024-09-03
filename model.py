@@ -3,6 +3,7 @@ import numpy as np
 import torch.nn as nn
 from torchvision import models
 import torch.nn.init as init
+import torch.nn.functional as F
 
 
 class RegressionResNet(nn.Module):
@@ -46,6 +47,18 @@ class RegressionResNet(nn.Module):
             return out, feat
         else:
             return out
+
+    def forward_feat(self, x):
+        out1 = self.backbone[:4](x)
+        out2 = self.backbone[4](out1)
+        out3 = self.backbone[5](out2)
+        out4 = self.backbone[6](out3)
+        out5 = self.backbone[7](out4)
+        return [F.adaptive_avg_pool2d(out5, (1, 1)).view(out5.size(0), -1),
+                F.adaptive_avg_pool2d(out4, (1, 1)).view(out4.size(0), -1),
+                F.adaptive_avg_pool2d(out3, (1, 1)).view(out3.size(0), -1),
+                F.adaptive_avg_pool2d(out2, (1, 1)).view(out2.size(0), -1)
+        ]
 
 
 class MLP(nn.Module):
@@ -129,6 +142,12 @@ class MLP(nn.Module):
             return out, feat
         else:
             return out
+
+    def forward_feat(self, x):
+        out1 = self.backbone[0:3](x)
+        out2 = self.backbone[3:6](out1)
+        out3 = self.backbone[6:9](out2)
+        return out1, out2, out3
 
     @torch.no_grad()
     def act(self, state: np.ndarray, device: str = "cpu") -> np.ndarray:
