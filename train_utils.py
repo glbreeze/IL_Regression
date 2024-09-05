@@ -4,6 +4,7 @@ import numpy as np
 import torch.optim as optim
 import torch.nn.functional as F
 from sklearn.decomposition import PCA
+from matplotlib import pyplot as plt
 
 
 def get_scheduler(args, optimizer):
@@ -39,6 +40,39 @@ def get_feat_pred(model, loader):
         all_preds = torch.cat(all_preds)
         all_labels = torch.cat(all_labels).float()
     return all_feats, all_preds, all_labels
+
+
+def get_all_feat(model, loader):
+    model.eval()
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    with torch.no_grad():
+        for batch_id, (input, target) in enumerate(loader):
+            input, target = input.to(device), target.to(device)
+            if target.ndim == 1:
+                target = target.unsqueeze(1)
+            feat_list = model.forward_feat(input)
+
+            if batch_id == 0:
+                feat_by_layer = {layer_id: [] for layer_id in range(len(feat_list))}
+
+            for layer_id, feat in enumerate(feat_list):
+                feat_by_layer[layer_id].append(feat)
+
+        for layer_id, layer_feat in feat_by_layer.items():
+            feat_by_layer[layer_id] = torch.cat(layer_feat, dim=0)
+
+    return feat_by_layer
+
+
+def plot_var_ratio(vr_dt):
+    fig, axes = plt.subplots(nrows=1, ncols=1)
+    cmap = plt.cm.viridis
+    norm = plt.Normalize(min(vr_dt.keys()), max(vr_dt.keys()))
+
+    for id, vr_ratio in vr_dt.items():
+        axes.plot(np.arange(len(vr_ratio)), vr_ratio, color=cmap(norm(id)), label=f'layer{id}')
+    axes.legend()
 
 
 def compute_cosine_norm(W):
@@ -77,7 +111,7 @@ def gram_schmidt(W):
 def compute_metrics(W, H, y_dim=None):
     result = {}
     H_row_norms = torch.norm(H, dim=1, keepdim=True)
-    H_normalized = H / H_row_norms
+    H_normalized = H / (H_row_norms + 1e-8)
 
     if y_dim == None:
         y_dim = W.shape[0]
@@ -120,60 +154,6 @@ def compute_metrics(W, H, y_dim=None):
     # del H_proj
 
     return result
-
-
-class Graph_Vars:
-    def __init__(self, dim=2):
-        self.epoch = []
-
-        self.train_mse = []
-        self.train_nc1 = []
-        self.train_nc3 = []
-        self.train_nc3a = []
-
-        self.val_mse = []
-        self.val_nc1 = []
-        self.val_nc3 = []
-        self.val_nc3a = []
-
-        self.nc2 = []
-        self.h_norm=[]
-
-        self.ww00 = []
-        if dim==2:
-            self.ww01 = []
-            self.ww11 = []
-            self.w_cos = []
-
-    def load_dt(self, nc_dt, epoch):
-        self.epoch.append(epoch)
-        for key in nc_dt:
-            try:
-                self.__getattribute__(key).append(nc_dt[key])
-            except:
-                print('{} is not attribute of Graph var'.format(key))
-
-
-class Train_Vars:
-    def __init__(self, dim=2):
-        self.epoch = []
-        self.lr = []
-
-        self.train_mse = []
-        self.train_proj_error = []
-        self.w_outer_d = []
-        self.ww00 = []
-        if dim==2:
-            self.ww01 = []
-            self.ww11 = []
-
-    def load_dt(self, nc_dt, epoch):
-        self.epoch.append(epoch)
-        for key in nc_dt:
-            try:
-                self.__getattribute__(key).append(nc_dt[key])
-            except:
-                print('{} is not attribute of Graph var'.format(key))
 
 
 def get_theoretical_solution(train_loader, args, all_labels=None, center=False):

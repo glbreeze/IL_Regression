@@ -106,7 +106,7 @@ for i, epoch in enumerate([None, args.ep]):
     if epoch == None:
         resume = None
     else:
-        resume = os.path.join('result', args.dataset, args.resume, 'ep{}_ckpt.pth'.format(epoch))
+        resume = os.path.join('../result', args.dataset, args.resume, 'ep{}_ckpt.pth'.format(epoch))
     error, normalized_y, all_labels = get_error_y(args, resume)
 
     p=axes[i].scatter(error[:,0], error[:,1], cmap='viridis',  c=normalized_y[:,1]/normalized_y[:,0], vmin=vmin, vmax=vmax,
@@ -138,7 +138,7 @@ for i, epoch in enumerate([None, args.ep]):
     if epoch == None:
         resume = None
     else:
-        resume = os.path.join('result', args.dataset, args.resume, 'ep{}_ckpt.pth'.format(epoch))
+        resume = os.path.join('../result', args.dataset, args.resume, 'ep{}_ckpt.pth'.format(epoch))
     error_, normalized_y_, all_labels_ = get_error_y(args, resume)
     error[i+1], normalized_y[i+1], all_labels[i+1] = error_, normalized_y_, all_labels_
 

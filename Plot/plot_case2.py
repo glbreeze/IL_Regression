@@ -31,9 +31,9 @@ add_headers(fig, col_headers=col_headers, row_headers=row_headers, **font_kwargs
 
 for row in ['A','B']:
     if row == 'A':
-        path = 'result/reacher/'
+        path = '../result/reacher/'
     elif row == 'B':
-        path = 'result/swimmer/'
+        path = '../result/swimmer/'
 
     nc1 = pd.read_csv(os.path.join(path, 'nc1.csv'))
     nc2 = pd.read_csv(os.path.join(path, 'nc2.csv'))

@@ -31,9 +31,9 @@ add_headers(fig, col_headers=col_headers, row_headers=row_headers, **font_kwargs
 
 for row in ['A','B']:
     if row == 'A':
-        path = 'result/reacher/dr10000'
+        path = '../result/reacher/dr10000'
     elif row == 'B':
-        path = 'result/reacher/dr10000'
+        path = '../result/reacher/dr10000'
 
     nc1 = pd.read_csv(os.path.join(path, 'we-2_nc1.csv'))
     nc2 = pd.read_csv(os.path.join(path, 'we-2_nc2.csv'))
@@ -130,9 +130,9 @@ add_headers(fig, col_headers=col_headers, row_headers=row_headers, **font_kwargs
 
 for row in ['A', 'B']:
     if row == 'A':
-        path = 'result/reacher/dr10000'
+        path = '../result/reacher/dr10000'
     elif row == 'B':
-        path = 'result/reacher/dr10000'
+        path = '../result/reacher/dr10000'
 
     hn = pd.read_csv(os.path.join(path, 'we-2_h.csv'))
     ww0 = pd.read_csv(os.path.join(path, 'we-2_w00.csv'))

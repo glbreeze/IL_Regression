@@ -17,7 +17,7 @@ from sklearn.decomposition import PCA
 
 from dataset import SubDataset, get_dataloader
 from model import RegressionResNet, MLP
-from train_utils import Graph_Vars, get_feat_pred, gram_schmidt, get_scheduler, Train_Vars, get_theoretical_solution, compute_metrics
+from train_utils import get_feat_pred, gram_schmidt, get_scheduler, get_theoretical_solution, compute_metrics, get_all_feat, plot_var_ratio
 from utils import print_model_param_nums, set_log_path, log, print_args, matrix_with_angle
 
 
@@ -284,6 +284,17 @@ def main(args):
             elif args.which_y == 1:
                 wandb.log({'mse/train_mse1': train_loss, 'mse/val_mse1': val_loss}, step=epoch)
 
+        if epoch == 0 or (epoch + 1) % (args.log_freq * 25) == 0:
+            feat_by_layer = get_all_feat(model, train_loader)
+            vr_by_layer = {}
+            for layer_id, feat in feat_by_layer.items():
+                cov = feat.T @ feat / len(feat)
+                U, S, Vt = np.linalg.svd(cov)
+                var_ratio = S / np.sum(S)
+                vr_by_layer[layer_id] = var_ratio
+            fig = plot_var_ratio(vr_by_layer)
+            wandb.log({"chart": fig}, step=epoch)
+
         if (epoch == 0 or (epoch+1) % args.save_freq == 0) and args.save_freq > 0:
             ckpt_path = os.path.join(args.save_dir, 'ep{}_ckpt.pth'.format(epoch))
             torch.save({
@@ -331,11 +342,11 @@ if __name__ == '__main__':
     parser.add_argument('--act', type=str, default='relu')
     parser.add_argument('--w', type=str, default='null')
     parser.add_argument('--bn', type=str, default='f') # f|t|p false|true|parametric
-    parser.add_argument('--init_s', type=float, default='1.0')
+    parser.add_argument('--drop', type=float, default='0')
 
     parser.add_argument('--max_epoch', type=int, default=1000)
     parser.add_argument('--batch_size', type=int, default=64)
-    parser.add_argument('--feat', type=str, default='b')
+    parser.add_argument('--feat', type=str, default='null')
     parser.add_argument('--lr', type=float, default=1e-3)
     parser.add_argument('--warmup', type=int, default=0)
     parser.add_argument('--lambda_H', type=float, default=1e-3)
