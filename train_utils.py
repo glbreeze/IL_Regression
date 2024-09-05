@@ -25,10 +25,10 @@ def get_feat_pred(model, loader):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     with torch.no_grad():
-        for i, batch in enumerate(loader):
-            input = batch['input'].to(device)
-            target = batch['target'].to(device)
+        for i, (input, target) in enumerate(loader):
             input, target = input.to(device), target.to(device)
+            if target.ndim == 1: 
+                target = target.unsqueeze(1)
             pred, feat = model(input, ret_feat=True)
 
             all_feats.append(feat)
@@ -37,7 +37,7 @@ def get_feat_pred(model, loader):
 
         all_feats = torch.cat(all_feats)
         all_preds = torch.cat(all_preds)
-        all_labels = torch.cat(all_labels)
+        all_labels = torch.cat(all_labels).float()
     return all_feats, all_preds, all_labels
 
 
@@ -84,15 +84,15 @@ def compute_metrics(W, H, y_dim=None):
 
     # NC1
     H_np = H.cpu().numpy()
-    pca_for_H = PCA(n_components=max(y_dim, 5))
+    pca_for_H = PCA(n_components=31)
     try:
         pca_for_H.fit(H_np)
     except Exception as e:
         print(e)
 
-    H_pca = torch.tensor(pca_for_H.components_[:max(y_dim, 5), :], device=H.device)  # First two principal components [2,5]
+    H_pca = torch.tensor(pca_for_H.components_[:max(y_dim, 6), :], device=H.device)  # First two principal components [2,5]
     H_U = gram_schmidt(H_pca)
-    for k in range(max(y_dim, 5)):
+    for k in range(max(y_dim, 6)):
         P_H = H_U[:k + 1, :].T @ H_U[:k + 1, :]
         result[f'nc1_pc{k + 1}'] = torch.sum((H @ P_H - H) ** 2).item() / len(H)
         result[f'nc1n_pc{k + 1}'] = torch.mean(torch.norm(H_normalized @ P_H - H_normalized, p=2, dim=1) ** 2).item()
@@ -100,7 +100,10 @@ def compute_metrics(W, H, y_dim=None):
 
     result['nc1'] = result[f'nc1_pc{y_dim}']
     result['nc1n'] = result[f'nc1n_pc{y_dim}']
-
+    
+    for k in range(5, 31, 5): 
+        result[f'CVR{k}'] = np.sum(pca_for_H.explained_variance_ratio_[:k])
+        
     try:
         inverse_mat = torch.inverse(W @ W.T)
     except Exception as e:
@@ -179,10 +182,10 @@ def get_theoretical_solution(train_loader, args, all_labels=None, center=False):
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         all_labels = []
         with torch.no_grad():
-            for i, batch in enumerate(train_loader):
-                target = batch['target'].to(device)
+            for i, (input, target) in enumerate(train_loader):
+                target = target.to(device)
                 all_labels.append(target)
-            all_labels = torch.cat(all_labels)   # [N, 2]
+            all_labels = torch.cat(all_labels).float()   # [N, 2]
 
     mu = torch.mean(all_labels, dim=0)
     if center:

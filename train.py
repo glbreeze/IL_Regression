@@ -27,7 +27,7 @@ def train_one_epoch(model, data_loader, optimizer, criterion, args):
     running_loss = 0.0
     all_feats = []
     for batch_idx, (images, targets) in enumerate(data_loader):
-        images, targets = images.to(device, non_blocking=True), targets.to(device, non_blocking=True)
+        images, targets = images.to(device, non_blocking=True), targets.float().to(device, non_blocking=True)
         if targets.ndim == 1: 
             targets = targets.unsqueeze(1)
         optimizer.zero_grad()
@@ -177,6 +177,7 @@ def main(args):
 
             # ===============compute train mse and projection error==================
             all_feats, preds, labels = get_feat_pred(model, train_loader)
+            torch.cuda.empty_cache()
             if args.y_norm not in ['null', 'n']:
                 y_shift, std = torch.tensor(train_loader.dataset.y_shift).to(preds.device), torch.tensor(train_loader.dataset.std).to(preds.device)
                 preds = preds @ std + y_shift
@@ -184,7 +185,7 @@ def main(args):
             if preds.shape[-1] == 2:
                 train_loss0 = torch.sum((preds[:,0] - labels[:,0])**2)/preds.shape[0]
                 train_loss1 = torch.sum((preds[:,1] - labels[:,1])**2)/preds.shape[0]
-            train_loss = criterion(preds, labels)
+            train_loss = torch.mean((preds - labels)**2)
             
             nc_train = compute_metrics(W, all_feats)
             train_hnorm = torch.norm(all_feats, p=2, dim=1).mean().item()
@@ -192,6 +193,7 @@ def main(args):
 
             # ===============compute val mse and projection error==================
             all_feats, preds, labels = get_feat_pred(model, val_loader)
+            torch.cuda.empty_cache()
             if args.y_norm not in ['null', 'n']:
                 y_shift, std = torch.tensor(train_loader.dataset.y_shift).to(preds.device), torch.tensor(train_loader.dataset.std).to(preds.device)
                 preds = preds @ std + y_shift
@@ -199,34 +201,38 @@ def main(args):
             if preds.shape[-1] == 2: 
                 val_loss0 = torch.sum((preds[:,0] - labels[:,0])**2)/preds.shape[0]
                 val_loss1 = torch.sum((preds[:,1] - labels[:,1])**2)/preds.shape[0]
-            val_loss = criterion(preds, labels)
+            val_loss = torch.mean((preds - labels)**2)
             
             nc_val = compute_metrics(W, all_feats)
             val_hnorm = torch.norm(all_feats, p=2, dim=1).mean().item()
             del all_feats, preds, labels
+            torch.cuda.empty_cache()
 
             # ================ NC2 ================
-            WWT_normalized = WWT / np.linalg.norm(WWT)
-            min_eigval = theory_stat['min_eigval']
-            Sigma_sqrt = theory_stat['Sigma_sqrt']
-            W_outer = args.lambda_H * (Sigma_sqrt / np.sqrt(args.lambda_H * args.lambda_W) - np.eye(args.num_y))
+            if args.num_y >= 2 : 
+                WWT_normalized = WWT / np.linalg.norm(WWT)
+                min_eigval = theory_stat['min_eigval']
+                Sigma_sqrt = theory_stat['Sigma_sqrt']
+                W_outer = args.lambda_H * (Sigma_sqrt / np.sqrt(args.lambda_H * args.lambda_W) - np.eye(args.num_y))
 
-            c_to_plot = np.linspace(0, min_eigval, num=1000)
-            NC3_to_plot = []
-            for c in c_to_plot:
-                c_sqrt = c ** 0.5
-                A = Sigma_sqrt - c_sqrt * np.eye(Sigma_sqrt.shape[0])
-                A_normalized = A / np.linalg.norm(A)
-                diff_mat = WWT_normalized - A_normalized
-                NC3_to_plot.append(np.linalg.norm(diff_mat))
+                c_to_plot = np.linspace(0, min_eigval, num=1000)
+                NC3_to_plot = []
+                for c in c_to_plot:
+                    c_sqrt = c ** 0.5
+                    A = Sigma_sqrt - c_sqrt * np.eye(Sigma_sqrt.shape[0])
+                    A_normalized = A / np.linalg.norm(A)
+                    diff_mat = WWT_normalized - A_normalized
+                    NC3_to_plot.append(np.linalg.norm(diff_mat))
 
-            data = [[a, b] for (a, b) in zip(c_to_plot, NC3_to_plot)]
-            table = wandb.Table(data=data, columns=["c", "NC3"])
-            wandb.log(
-                {"NC3(c)": wandb.plot.line(table, "c", "NC3", title="NC3 as a Function of c")},
-                step=epoch)
-            best_c = c_to_plot[np.argmin(NC3_to_plot)]
-            NC3 = min(NC3_to_plot)
+                data = [[a, b] for (a, b) in zip(c_to_plot, NC3_to_plot)]
+                table = wandb.Table(data=data, columns=["c", "NC3"])
+                wandb.log(
+                    {"NC3(c)": wandb.plot.line(table, "c", "NC3", title="NC3 as a Function of c")},
+                    step=epoch)
+                best_c = c_to_plot[np.argmin(NC3_to_plot)]
+                NC3 = min(NC3_to_plot)
+            else: 
+                best_c, NC3 = 0, 0
 
             # ================ log to wandb ================
             nc_dt = {
@@ -242,6 +248,12 @@ def main(args):
                 'EVR/EVR3': nc_train['EVR3'],
                 'EVR/EVR4': nc_train['EVR4'],
                 'EVR/EVR5': nc_train['EVR5'],
+                
+                'CVR/CVR5': nc_train['CVR5'],
+                'CVR/CVR10': nc_train['CVR10'],
+                'CVR/CVR15': nc_train['CVR15'],
+                'CVR/CVR20': nc_train['CVR20'],
+                'CVR/CVR30': nc_train['CVR30'],
 
                 'NC1/nc1_pc1': nc_train['nc1_pc1'],
                 'NC1/nc1_pc2': nc_train['nc1_pc2'],
@@ -339,7 +351,7 @@ if __name__ == '__main__':
     parser.add_argument('--start_epoch', default=0, type=int, metavar='N',
                         help='manual epoch number (useful on restarts)')
     parser.add_argument('--save_freq', default=10, type=int)
-    parser.add_argument('--log_freq', default=20, type=int)
+    parser.add_argument('--log_freq', default=10, type=int)
 
     parser.add_argument("--seed", type=int, default=2021, help="random seed")
     parser.add_argument('--exp_name', type=str, default='exp')

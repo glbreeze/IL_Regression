@@ -28,7 +28,7 @@ parser.add_argument('--ufm', default=False, action='store_true')
 parser.add_argument('--bias', default=False, action='store_true')
 
 parser.add_argument('--exp_name', type=str, default='exp')
-args = parser.parse_args([])
+args = parser.parse_args()
 args.act = 'relu'
 args.exp_dir = os.path.join(f'result/{args.dataset}', args.exp_name)
 
