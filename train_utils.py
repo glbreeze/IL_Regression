@@ -52,6 +52,7 @@ def get_all_feat(model, loader):
             if target.ndim == 1:
                 target = target.unsqueeze(1)
             feat_list = model.forward_feat(input)
+            feat_list = [input] + feat_list
 
             if batch_id == 0:
                 feat_by_layer = {layer_id: [] for layer_id in range(len(feat_list))}
@@ -73,6 +74,7 @@ def plot_var_ratio(vr_dt):
     for id, vr_ratio in vr_dt.items():
         axes.plot(np.arange(len(vr_ratio)), vr_ratio, color=cmap(norm(id)), label=f'layer{id}')
     axes.legend()
+    return fig
 
 
 def compute_cosine_norm(W):

@@ -284,7 +284,7 @@ def main(args):
             elif args.which_y == 1:
                 wandb.log({'mse/train_mse1': train_loss, 'mse/val_mse1': val_loss}, step=epoch)
 
-        if epoch == 0 or (epoch + 1) % (args.log_freq * 25) == 0:
+        if epoch == 0 or (epoch + 1) % (args.log_freq * 20) == 0:
             feat_by_layer = get_all_feat(model, train_loader)
             vr_by_layer = {}
             for layer_id, feat in feat_by_layer.items():
