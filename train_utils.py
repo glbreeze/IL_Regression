@@ -77,6 +77,20 @@ def plot_var_ratio(vr_dt):
     return fig
 
 
+def plot_var_ratio_hw(vr_dt, wr_dt):
+    fig, axes = plt.subplots(nrows=1, ncols=2, figsize=(10, 6))
+    cmap = plt.cm.viridis
+    norm = plt.Normalize(min(vr_dt.keys()), max(vr_dt.keys()))
+
+    for id, vr_ratio in vr_dt.items():
+        wr_ratio = wr_dt[id]
+        axes[0].plot(np.arange(len(vr_ratio)), vr_ratio, color=cmap(norm(id)), label=f'layer{id}')
+        axes[1].plot(np.arange(len(wr_ratio)), wr_ratio, color=cmap(norm(id)), label=f'layer{id}')
+    axes[0].legend()
+    axes[1].legend()
+    return fig
+
+
 def compute_cosine_norm(W):
     # Compute cosine similarity between row vectors
 
