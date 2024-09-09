@@ -61,6 +61,7 @@ def main(args):
         else:
             args.num_y = 1
     elif args.dataset in ['mnist']:
+        args.num_x = 28**2
         args.num_y = 1
             
     # ================== setup wandb  ==================

@@ -21,9 +21,14 @@ class RegressionResNet(nn.Module):
             resnet_model.conv1 = nn.Conv2d(1, conv1_out_ch, kernel_size=3, stride=1, padding=1, bias=False)  # Small dataset filter size used by He et al. (2015)  
             resnet_model.maxpool = nn.Identity()
             
-        self.backbone = nn.Sequential(*list(resnet_model.children())[:-2])
+        self.backbone = nn.Sequential(nn.Sequential(resnet_model.conv1, resnet_model.bn1, resnet_model.relu, resnet_model.maxpool),
+                                      resnet_model.layer1,
+                                      resnet_model.layer2,
+                                      resnet_model.layer3,
+                                      resnet_model.layer4,
+                                      )
         
-        if self.args.feat == 'f':    # without GAP 
+        if self.args.feat == 'f':
             self.feat = nn.Sequential(
                 nn.AdaptiveAvgPool2d(output_size=(1, 1)), 
                 nn.Flatten(), 
@@ -36,8 +41,6 @@ class RegressionResNet(nn.Module):
             )
 
         self.fc = nn.Linear(resnet_model.fc.in_features, num_outputs, bias=args.bias)
-        if self.args.init_s > 0 and self.args.init_s != 1:
-            self.fc.weight.data = self.fc.weight.data * self.args.init_s
     
     def forward(self, x, ret_feat=False):
         x = self.backbone(x)
@@ -49,16 +52,11 @@ class RegressionResNet(nn.Module):
             return out
 
     def forward_feat(self, x):
-        out1 = self.backbone[:4](x)
-        out2 = self.backbone[4](out1)
-        out3 = self.backbone[5](out2)
-        out4 = self.backbone[6](out3)
-        out5 = self.backbone[7](out4)
-        return [F.adaptive_avg_pool2d(out5, (1, 1)).view(out5.size(0), -1),
-                F.adaptive_avg_pool2d(out4, (1, 1)).view(out4.size(0), -1),
-                F.adaptive_avg_pool2d(out3, (1, 1)).view(out3.size(0), -1),
-                F.adaptive_avg_pool2d(out2, (1, 1)).view(out2.size(0), -1)
-        ]
+        feat_list = []
+        for m in self.backbone:
+            x = m(x)
+            feat_list.append(F.adaptive_avg_pool2d(x, (1, 1)).view(x.size(0), -1))
+        return feat_list
 
 
 class MLP(nn.Module):
