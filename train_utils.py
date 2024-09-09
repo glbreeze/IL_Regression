@@ -42,7 +42,7 @@ def get_feat_pred(model, loader):
     return all_feats, all_preds, all_labels
 
 
-def get_all_feat(model, loader):
+def get_all_feat(model, loader, include_input=True):
     model.eval()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -52,7 +52,8 @@ def get_all_feat(model, loader):
             if target.ndim == 1:
                 target = target.unsqueeze(1)
             feat_list = model.forward_feat(input)
-            feat_list = [input] + feat_list
+            if include_input:
+                feat_list = [input] + feat_list
 
             if batch_id == 0:
                 feat_by_layer = {layer_id: [] for layer_id in range(len(feat_list))}
@@ -61,7 +62,7 @@ def get_all_feat(model, loader):
                 feat_by_layer[layer_id].append(feat)
 
         for layer_id, layer_feat in feat_by_layer.items():
-            feat_by_layer[layer_id] = torch.cat(layer_feat, dim=0)
+            feat_by_layer[layer_id] = torch.cat(layer_feat, dim=0).cpu().numpy()
 
     return feat_by_layer
 

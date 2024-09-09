@@ -17,7 +17,7 @@ from sklearn.decomposition import PCA
 
 from dataset import SubDataset, get_dataloader
 from model import RegressionResNet, MLP
-from train_utils import get_feat_pred, gram_schmidt, get_scheduler, get_theoretical_solution, compute_metrics, get_all_feat, plot_var_ratio_hw
+from train_utils import get_feat_pred, gram_schmidt, get_scheduler, get_theoretical_solution, compute_metrics, get_all_feat, plot_var_ratio_hw, plot_var_ratio
 from utils import print_model_param_nums, set_log_path, log, print_args, matrix_with_angle
 
 
@@ -287,23 +287,27 @@ def main(args):
 
         # ================ log the figure ================
         if epoch == 0 or (epoch + 1) % (args.log_freq * 20) == 0:
-            feat_by_layer = get_all_feat(model, train_loader)
-            weight_by_layer = {id: model.backbone[id][0].weight.data for id in range(len(model.backbone))}
-            weight_by_layer[len(model.backbone)] = model.fc.weight.data
-
+            include_input = False if args.dataset in ['mnist'] else True
+            feat_by_layer = get_all_feat(model, train_loader, include_input=include_input)
             vr_by_layer = {}
             for layer_id, feat in feat_by_layer.items():
                 cov = feat.T @ feat / len(feat)
                 U, S, Vt = np.linalg.svd(cov)
                 var_ratio = S / np.sum(S)
                 vr_by_layer[layer_id] = var_ratio
-            wr_by_layer = {}
-            for layer_id, w in weight_by_layer.items():
-                cov = w.T @ w
-                U, S, Vt = np.linalg.svd(cov)
-                var_ratio = S / np.sum(S)
-                wr_by_layer[layer_id] = var_ratio
-            fig = plot_var_ratio_hw(vr_by_layer, wr_by_layer)
+            
+            if args.arch.startswith('mlp'): 
+                weight_by_layer = {id: model.backbone[id][0].weight.data for id in range(len(model.backbone))}
+                weight_by_layer[len(model.backbone)] = model.fc.weight.data
+                wr_by_layer = {}
+                for layer_id, w in weight_by_layer.items():
+                    cov = w.T @ w
+                    U, S, Vt = np.linalg.svd(cov)
+                    var_ratio = S / np.sum(S)
+                    wr_by_layer[layer_id] = var_ratio
+                fig = plot_var_ratio_hw(vr_by_layer, wr_by_layer)
+            else: 
+                fig = plot_var_ratio(vr_by_layer)
             wandb.log({"chart": wandb.Image(fig)}, step=epoch)
 
         if (epoch == 0 or (epoch+1) % args.save_freq == 0) and args.save_freq > 0:
