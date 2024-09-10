@@ -31,6 +31,9 @@ def train_one_epoch(model, data_loader, optimizer, criterion, args):
         if targets.ndim == 1: 
             targets = targets.unsqueeze(1)
         optimizer.zero_grad()
+        
+        if images.ndim == 4 and model.args.arch.startswith('mlp'): 
+            images = images.view(images.shape[0], -1)
         outputs, feats = model(images, ret_feat=True)
         all_feats.append(feats.data)
 
@@ -297,8 +300,8 @@ def main(args):
                 vr_by_layer[layer_id] = var_ratio
             
             if args.arch.startswith('mlp'): 
-                weight_by_layer = {id: model.backbone[id][0].weight.data for id in range(len(model.backbone))}
-                weight_by_layer[len(model.backbone)] = model.fc.weight.data
+                weight_by_layer = {id: model.backbone[id][0].weight.data.cpu().numpy() for id in range(len(model.backbone))}
+                weight_by_layer[len(model.backbone)] = model.fc.weight.data.cpu().numpy()
                 wr_by_layer = {}
                 for layer_id, w in weight_by_layer.items():
                     cov = w.T @ w

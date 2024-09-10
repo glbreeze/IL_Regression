@@ -25,10 +25,14 @@ def train_one_epoch(model, data_loader, optimizer, criterion, args):
     model.train()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     running_loss = 0.0
+    num_acc = 0
     all_feats = []
     for batch_idx, (images, targets) in enumerate(data_loader):
-        images, targets = images.to(device, non_blocking=True), targets.float().to(device, non_blocking=True)
+        images, targets = images.to(device, non_blocking=True), targets.to(device, non_blocking=True)
         optimizer.zero_grad()
+        
+        if images.ndim == 4 and model.args.arch.startswith('mlp'): 
+            images = images.view(images.shape[0], -1)
         outputs, feats = model(images, ret_feat=True)
         all_feats.append(feats.data)
 
@@ -42,10 +46,12 @@ def train_one_epoch(model, data_loader, optimizer, criterion, args):
         optimizer.step()
 
         running_loss += loss.item()
+        num_acc += (outputs.argmax(dim=-1) == targets).sum().item()
     running_train_loss = running_loss / len(data_loader)
+    running_train_acc = num_acc / len(data_loader.dataset)
 
     all_feats = torch.cat(all_feats)
-    return all_feats, running_train_loss
+    return all_feats, running_train_loss, running_train_acc
 
 
 def main(args):
@@ -115,14 +121,14 @@ def main(args):
 
             # ===============compute train mse and projection error==================
             all_feats, preds, labels = get_feat_pred(model, train_loader)
-            train_acc = (preds.argmax(dim=-1) == labels).float().mean().item()
+            train_acc = (preds.argmax(dim=-1) == labels.squeeze()).float().mean().item()
 
             nc_train = compute_metrics(W, all_feats)
-            nc_cls = analysis_feat(labels, all_feats, num_classes=args.num_y, W=W)
+            nc_cls = analysis_feat(labels.squeeze(), all_feats, num_classes=args.num_y, W=W)
 
             # ===============compute val mse and projection error==================
             all_feats, preds, labels = get_feat_pred(model, val_loader)
-            val_acc = (preds.argmax(dim=-1) == labels).float().mean().item()
+            val_acc = (preds.argmax(dim=-1) == labels.squeeze()).float().mean().item()
             nc_val = compute_metrics(W, all_feats)
 
             del all_feats, preds, labels
@@ -160,9 +166,10 @@ def main(args):
                 'cls_nc/train_acc': train_acc,
                 'cls_nc/val_acc': val_acc,
             }
+            wandb.log(nc_dt, step=epoch)
 
             # ================ log the figure ================
-            if epoch == 0 or (epoch + 1) % (args.log_freq * 20) == 0:
+            if epoch == 0 or (epoch + 1) % (args.max_epoch//5) == 0:
                 include_input = False if args.dataset in ['mnist'] else True
                 feat_by_layer = get_all_feat(model, train_loader, include_input=include_input)
                 vr_by_layer = {}
@@ -173,8 +180,8 @@ def main(args):
                     vr_by_layer[layer_id] = var_ratio
 
                 if args.arch.startswith('mlp'):
-                    weight_by_layer = {id: model.backbone[id][0].weight.data for id in range(len(model.backbone))}
-                    weight_by_layer[len(model.backbone)] = model.fc.weight.data
+                    weight_by_layer = {id: model.backbone[id][0].weight.data.cpu().numpy() for id in range(len(model.backbone))}
+                    weight_by_layer[len(model.backbone)] = model.fc.weight.data.cpu().numpy()
                     wr_by_layer = {}
                     for layer_id, w in weight_by_layer.items():
                         cov = w.T @ w
@@ -198,7 +205,8 @@ def main(args):
             log('--save model to {}'.format(ckpt_path))
 
         # =============== train model ==================
-        all_feats, train_loss = train_one_epoch(model, train_loader, optimizer, criterion, args=args)
+        all_feats, train_loss, train_acc = train_one_epoch(model, train_loader, optimizer, criterion, args=args)
+        wandb.log({'cls_nc/train_loss': train_loss, 'cls_nc/run_acc': train_acc}, step=epoch)
         if epoch < args.warmup:
             warmup_scheduler.step()
         else:
@@ -263,6 +271,7 @@ if __name__ == '__main__':
 
     if args.dataset == 'mnist':
         args.num_y = 10
+        args.num_x = 28*28
 
     set_seed(args.seed)
     main(args)

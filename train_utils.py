@@ -30,6 +30,8 @@ def get_feat_pred(model, loader):
             input, target = input.to(device), target.to(device)
             if target.ndim == 1: 
                 target = target.unsqueeze(1)
+            if input.ndim == 4 and model.args.arch.startswith('mlp'): 
+                input = input.view(input.shape[0], -1)
             pred, feat = model(input, ret_feat=True)
 
             all_feats.append(feat)
@@ -49,6 +51,8 @@ def get_all_feat(model, loader, include_input=True):
     with torch.no_grad():
         for batch_id, (input, target) in enumerate(loader):
             input, target = input.to(device), target.to(device)
+            if input.ndim == 4 and model.args.arch.startswith('mlp'): 
+                input = input.view(input.shape[0], -1)
             if target.ndim == 1:
                 target = target.unsqueeze(1)
             feat_list = model.forward_feat(input)
