@@ -265,9 +265,30 @@ class MujocoBuffer(Dataset):
         except Exception as e:
             print(e)
 
+        if getattr(self.args, 'cls', False):
+            self.actions = self.convert_cls_label(self.actions)
+
         self.state_dim = self.states.shape[1]
         self.action_dim = 1 if self.actions.ndim == 1 else self.actions.shape[1]
         print(f"Dataset size: {self.size}; State Dim: {self.state_dim}; Action_Dim: {self.action_dim}.")
+
+    def convert_cls_label(self, arr):
+        percentiles = np.percentile(arr[:,0], [20, 40, 60, 80])
+
+        def assign_label(x, percentiles):
+            if x <= percentiles[0]:
+                return 0
+            elif x <= percentiles[1]:
+                return 1
+            elif x <= percentiles[2]:
+                return 2
+            elif x <= percentiles[3]:
+                return 3
+            else:
+                return 4
+
+        cls_labels = np.array([assign_label(x, percentiles) for x in arr[:,0]])
+        return cls_labels
 
     def get_state_dim(self):
         return self.state_dim

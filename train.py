@@ -181,6 +181,7 @@ def main(args):
 
             # ===============compute train mse and projection error==================
             all_feats, preds, labels = get_feat_pred(model, train_loader)
+            if args.dataset == 'mnist': labels = labels.float()
             torch.cuda.empty_cache()
             if args.y_norm not in ['null', 'n']:
                 y_shift, std = torch.tensor(train_loader.dataset.y_shift).to(preds.device), torch.tensor(train_loader.dataset.std).to(preds.device)
@@ -197,6 +198,7 @@ def main(args):
 
             # ===============compute val mse and projection error==================
             all_feats, preds, labels = get_feat_pred(model, val_loader)
+            if args.dataset == 'mnist': labels = labels.float()
             torch.cuda.empty_cache()
             if args.y_norm not in ['null', 'n']:
                 y_shift, std = torch.tensor(train_loader.dataset.y_shift).to(preds.device), torch.tensor(train_loader.dataset.std).to(preds.device)

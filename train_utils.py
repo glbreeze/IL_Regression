@@ -40,7 +40,7 @@ def get_feat_pred(model, loader):
 
         all_feats = torch.cat(all_feats)
         all_preds = torch.cat(all_preds)
-        all_labels = torch.cat(all_labels).float()
+        all_labels = torch.cat(all_labels)
     return all_feats, all_preds, all_labels
 
 
@@ -53,8 +53,7 @@ def get_all_feat(model, loader, include_input=True):
             input, target = input.to(device), target.to(device)
             if input.ndim == 4 and model.args.arch.startswith('mlp'): 
                 input = input.view(input.shape[0], -1)
-            if target.ndim == 1:
-                target = target.unsqueeze(1)
+
             feat_list = model.forward_feat(input)
             if include_input:
                 feat_list = [input] + feat_list

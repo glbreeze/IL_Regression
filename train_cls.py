@@ -26,7 +26,6 @@ def train_one_epoch(model, data_loader, optimizer, criterion, args):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     running_loss = 0.0
     num_acc = 0
-    all_feats = []
     for batch_idx, (images, targets) in enumerate(data_loader):
         images, targets = images.to(device, non_blocking=True), targets.to(device, non_blocking=True)
         optimizer.zero_grad()
@@ -34,7 +33,6 @@ def train_one_epoch(model, data_loader, optimizer, criterion, args):
         if images.ndim == 4 and model.args.arch.startswith('mlp'): 
             images = images.view(images.shape[0], -1)
         outputs, feats = model(images, ret_feat=True)
-        all_feats.append(feats.data)
 
         loss = criterion(outputs, targets)
         if args.ufm:
@@ -50,13 +48,18 @@ def train_one_epoch(model, data_loader, optimizer, criterion, args):
     running_train_loss = running_loss / len(data_loader)
     running_train_acc = num_acc / len(data_loader.dataset)
 
-    all_feats = torch.cat(all_feats)
-    return all_feats, running_train_loss, running_train_acc
+    return running_train_loss, running_train_acc
 
 
 def main(args):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     train_loader, val_loader = get_dataloader(args)
+    if args.dataset == 'mnist':
+        args.num_y = 10
+        args.num_x = 28*28
+    elif args.dataset == 'reacher':
+        args.num_x = train_loader.dataset.state_dim
+        args.num_y = 5
 
     # ================== setup wandb  ==================
 
@@ -117,12 +120,10 @@ def main(args):
         if epoch == 0 or epoch % args.log_freq == 0:
             # === cosine between Wi's
             W = model.fc.weight.data  # [2, 512]
-            WWT = (W @ W.T).cpu().numpy()
 
             # ===============compute train mse and projection error==================
             all_feats, preds, labels = get_feat_pred(model, train_loader)
             train_acc = (preds.argmax(dim=-1) == labels.squeeze()).float().mean().item()
-
             nc_train = compute_metrics(W, all_feats)
             nc_cls = analysis_feat(labels.squeeze(), all_feats, num_classes=args.num_y, W=W)
 
@@ -205,7 +206,7 @@ def main(args):
             log('--save model to {}'.format(ckpt_path))
 
         # =============== train model ==================
-        all_feats, train_loss, train_acc = train_one_epoch(model, train_loader, optimizer, criterion, args=args)
+        train_loss, train_acc = train_one_epoch(model, train_loader, optimizer, criterion, args=args)
         wandb.log({'cls_nc/train_loss': train_loss, 'cls_nc/run_acc': train_acc}, step=epoch)
         if epoch < args.warmup:
             warmup_scheduler.step()
@@ -227,6 +228,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Regression NC")
     parser.add_argument('--dataset', type=str, default='mnist')
     parser.add_argument('--data_ratio', type=float, default=1.0)
+    parser.add_argument('--cls', action='store_true', default=False)
+
 
     parser.add_argument('--arch', type=str, default='resnet18')
     parser.add_argument('--num_y', type=int, default=2)
@@ -268,10 +271,6 @@ if __name__ == '__main__':
     set_log_path(args.save_dir)
     log('save log to path {}'.format(args.save_dir))
     log(print_args(args))
-
-    if args.dataset == 'mnist':
-        args.num_y = 10
-        args.num_x = 28*28
 
     set_seed(args.seed)
     main(args)
