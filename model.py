@@ -4,10 +4,11 @@ import torch.nn as nn
 from torchvision import models
 import torch.nn.init as init
 import torch.nn.functional as F
+from typing import Any, cast, Dict, List, Optional, Union
 
 
 class RegressionResNet(nn.Module):
-    def __init__(self, pretrained=True, num_outputs=2, args=None):
+    def __init__(self, pretrained=False, num_outputs=2, args=None):
         super(RegressionResNet, self).__init__()
         self.args = args 
 
@@ -130,3 +131,110 @@ class MLP(nn.Module):
         # Modified: Clip the actions, since we do not have a tanh in the actor.
         action = self(state).clamp(min=-self.max_action, max=self.max_action)
         return action.cpu().data.numpy().flatten()
+
+
+cfgs: Dict[str, List[Union[str, int]]] = {
+    "A": [64, "M", 128, "M", 256, 256, "M", 512, 512, "M", 512, 512, "M"],
+    "B": [64, 64, "M", 128, 128, "M", 256, 256, "M", 512, 512, "M", 512, 512, "M"],
+    "D": [64, 64, "M", 128, 128, "M", 256, 256, 256, "M", 512, 512, 512, "M", 512, 512, 512, "M"],
+    "E": [64, 64, "M", 128, 128, "M", 256, 256, 256, 256, "M", 512, 512, 512, 512, "M", 512, 512, 512, 512, "M"],
+}
+
+
+class VGG(nn.Module):
+    def __init__(self, num_classes=1000, dropout=0, args=None):
+        super().__init__()
+        self.args = args
+
+        vgg_cfgs = {'vgg11': [1, 1, 2, 2, 2], 'vgg13': [2, 2, 2, 2, 2], 'vgg16': [2, 2, 3, 3, 3]}
+        channels = [64, 128, 256, 512, 512]
+        cfg = vgg_cfgs[args.arch]
+
+        backbone = []
+        in_channels = 3
+        for i, n_conv in enumerate(cfg):
+            backbone += [self.vgg_block(n_conv=n_conv, in_channels=in_channels, out_channels=channels[i])]
+            in_channels = channels[i]
+        self.backbone = nn.Sequential(*backbone)
+
+        self.feat = nn.Sequential(
+            nn.Flatten(),
+            nn.Dropout(p=dropout),
+            nn.Linear(512, 512),
+            nn.ReLU(True),
+            nn.Dropout(p=dropout),
+            nn.Linear(512, 512),
+            nn.ReLU(True),
+        )
+        self.fc = nn.Linear(512, num_classes)
+
+    def vgg_block(self, n_conv, in_channels, out_channels):
+        layers = []
+        for i in range(n_conv):
+            conv2d = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1)
+            norm = nn.BatchNorm2d(out_channels)
+            layers += [conv2d, norm, nn.ReLU(inplace=True)]
+            in_channels = out_channels
+        layers += [nn.MaxPool2d(kernel_size=2, stride=2)]
+        return nn.Sequential(*layers)
+
+    def forward(self, x, ret_feat=False):
+        x = self.backbone(x)
+        x = self.feat(x)
+        out = self.fc(x)
+        if ret_feat:
+            return out, x
+        else:
+            return out
+
+    def forward_feat(self, x):
+        feat_list = []
+        for m in self.backbone:
+            x = m(x)
+            feat_list.append(x)
+        return feat_list
+
+
+class LeNet(nn.Module):
+    def __init__(self, num_classes=100, args=None):
+        super(LeNet, self).__init__()
+        self.args = args
+        if len(args.arch) > 2:
+            cfg = [int(n) for n in args.arch[2:].split('_')]
+        else:
+            cfg=[6, 16]
+
+        self.backbone = nn.Sequential(
+            nn.Sequential(nn.Conv2d(1, cfg[0], kernel_size=5,),
+                          nn.ReLU(),
+                          nn.AvgPool2d(kernel_size=2, stride=2),   # 1/2
+                          ),
+            nn.Sequential(nn.Conv2d(cfg[0], cfg[1], kernel_size=5,),
+                          nn.ReLU(),
+                          nn.AvgPool2d(kernel_size=2, stride=2),   # 1/4
+                          nn.Flatten(),
+                          ),
+            nn.Sequential(nn.Linear(cfg[0] * 5 * 5, 120),
+                          nn.ReLU(),
+                          ),
+            nn.Sequential(nn.Linear(120, 84),
+                          nn.ReLU(),
+                          )
+        )
+
+        self.fc = nn.Linear(84, num_classes)
+
+    def forward(self, x, ret_feat=False):
+        feat = self.backbone(x)
+        out = self.fc(feat)
+        if ret_feat:
+            return out, feat
+        else:
+            return out
+
+    def forward_feat(self, x):
+        feat_list = []
+        for m in self.backbone:
+            x = m(x)
+            feat_list.append(x)
+        return feat_list
