@@ -1,6 +1,6 @@
 import os
 import h5py
-import pickle 
+import pickle
 import numpy as np
 from PIL import Image
 import torch
@@ -13,27 +13,45 @@ DATA_FOLDER = '../dataset/mujoco_data/'
 
 def get_dataloader(args):
     if args.dataset == 'Carla' or args.dataset == 'carla':
-        train_dataset = SubDataset('/vast/lg154/Carla_JPG/Train/train_list.txt', '/vast/lg154/Carla_JPG/Train/sub_targets.pkl', transform=transform, dim=args.num_y)
-        train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=4, pin_memory=True, persistent_workers=True)
-        val_dataset = SubDataset('/vast/lg154/Carla_JPG/Val/val_list.txt', '/vast/lg154/Carla_JPG/Val/sub_targets.pkl', transform=transform, dim=args.num_y)
-        val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=4, pin_memory=True, persistent_workers=True)
-    elif args.dataset == 'mnist': 
-        transform=transforms.Compose([
-                           transforms.ToTensor(),
-                           transforms.Normalize((0.1307,), (0.3081,))
-                       ])
+        train_dataset = SubDataset('/vast/lg154/Carla_JPG/Train/train_list.txt',
+                                   '/vast/lg154/Carla_JPG/Train/sub_targets.pkl', transform=transform, dim=args.num_y)
+        train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=4,
+                                  pin_memory=True, persistent_workers=True)
+        val_dataset = SubDataset('/vast/lg154/Carla_JPG/Val/val_list.txt', '/vast/lg154/Carla_JPG/Val/sub_targets.pkl',
+                                 transform=transform, dim=args.num_y)
+        val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=4, pin_memory=True,
+                                persistent_workers=True)
+    elif args.dataset == 'mnist':
+        transform = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize((0.1307,), (0.3081,))
+        ])
         trainset = datasets.MNIST(root='../dataset', train=True, download=True, transform=transform)
-        train_loader = DataLoader(trainset, batch_size=args.batch_size, shuffle=True, num_workers=4, pin_memory=True, persistent_workers=True)
+        train_loader = DataLoader(trainset, batch_size=args.batch_size, shuffle=True, num_workers=4, pin_memory=True,
+                                  persistent_workers=True)
         valset = datasets.MNIST(root='../dataset', train=False, download=True, transform=transform)
-        val_loader = DataLoader(valset, batch_size=args.batch_size, shuffle=False, num_workers=4, pin_memory=True, persistent_workers=True)
+        val_loader = DataLoader(valset, batch_size=args.batch_size, shuffle=False, num_workers=4, pin_memory=True,
+                                persistent_workers=True)
+
+    elif args.dataset == 'cifar10':
+        transform = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.4914, 0.4822, 0.4465], std=[0.2023, 0.1994, 0.2010]),
+        ])
+        trainset = datasets.CIFAR10(root='../dataset', train=True, download=True, transform=transform)
+        train_loader = DataLoader(trainset, batch_size=args.batch_size, shuffle=True, num_workers=4, pin_memory=True,
+                                  persistent_workers=True)
+        valset = datasets.CIFAR10(root='../dataset', train=False, download=True, transform=transform)
+        val_loader = DataLoader(valset, batch_size=args.batch_size, shuffle=False, num_workers=4, pin_memory=True,
+                                persistent_workers=True)
 
     elif args.dataset in ["swimmer", 'reacher', 'hopper']:
         train_dataset = MujocoBuffer(data_folder=DATA_FOLDER,
-            env=args.dataset,
-            split='train',
-            data_ratio=args.data_ratio,
-            args=args
-        )
+                                     env=args.dataset,
+                                     split='train',
+                                     data_ratio=args.data_ratio,
+                                     args=args
+                                     )
         val_dataset = MujocoBuffer(
             data_folder=DATA_FOLDER,
             env=args.dataset,
@@ -47,7 +65,7 @@ def get_dataloader(args):
         )
         train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
         val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False)
-        
+
     elif args.dataset.endswith('_ab'):
         train_dataset = MujocoAblate(data_folder=DATA_FOLDER,
                                      env=args.dataset.replace('_ab', ''),
@@ -106,9 +124,9 @@ class ImageTargetDataset(Dataset):
         if self.transform:
             image = self.transform(image)
 
-        if self.dim==1:
+        if self.dim == 1:
             return {'input': image, 'target': torch.tensor(target[0], dtype=torch.float)}
-        elif self.dim==2:
+        elif self.dim == 2:
             return {'input': image, 'target': torch.tensor(target[[0, 10]], dtype=torch.float)}
 
 
@@ -127,10 +145,10 @@ class SubDataset(Dataset):
         with open(train_list, 'r') as f:
             for line in f:
                 self.img_path.append(os.path.join(folder, 'sub_images', line.strip()))
-        
+
         with open(target_file, 'rb') as file:
             self.targets = pickle.load(file)
-                
+
         self.transform = transform
         self.dim = dim
 
@@ -141,7 +159,7 @@ class SubDataset(Dataset):
 
         img_path = self.img_path[idx]
         image = Image.open(img_path).convert('RGB')
-    
+
         target = self.targets[idx]
 
         if self.transform:
@@ -160,14 +178,14 @@ class MujocoBuffer(Dataset):
             env: str,
             split: str,
             data_ratio,
-            args = None,
-            y_shift = None,
-            div = None,
+            args=None,
+            y_shift=None,
+            div=None,
             x_shift=None,
             x_div=None,
     ):
         self.size = 0
-        self.args=args
+        self.args = args
         self.state_dim = 0
         self.action_dim = 0
         self.env = env
@@ -188,7 +206,7 @@ class MujocoBuffer(Dataset):
                 self.x_shift = np.mean(self.states, axis=0)
                 centered_data = self.states - self.x_shift  # [B, d]
                 covariance_matrix = centered_data.T @ centered_data / len(self.states)
-                if self.env == 'reacher':    # last dim value is constant 0 
+                if self.env == 'reacher':  # last dim value is constant 0
                     covariance_matrix[-1, -1] = 1.0
                 self.x_div = np.diag(1 / np.sqrt(np.diag(covariance_matrix)))
                 self.states = centered_data @ self.x_div
@@ -210,16 +228,16 @@ class MujocoBuffer(Dataset):
                     self.div = np.diag(1 / np.sqrt(np.diag(covariance_matrix)))
                     self.std = np.diag(np.sqrt(np.diag(covariance_matrix)))
                 else:
-                    self.div, self.std = 1/np.sqrt(covariance_matrix), np.sqrt(covariance_matrix)
+                    self.div, self.std = 1 / np.sqrt(covariance_matrix), np.sqrt(covariance_matrix)
             elif self.args.y_norm == 'norm0':
                 self.y_shift = np.zeros(self.actions.shape[-1])
-                centered_data = self.actions          # no centering
+                centered_data = self.actions  # no centering
                 covariance_matrix = np.dot(centered_data.T, centered_data) / len(self.actions)
                 if self.args.which_y == -1:
                     self.div = np.diag(1 / np.sqrt(np.diag(covariance_matrix)))
                     self.std = np.diag(np.sqrt(np.diag(covariance_matrix)))
                 else:
-                    self.div, self.std = 1/np.sqrt(covariance_matrix), np.sqrt(covariance_matrix)
+                    self.div, self.std = 1 / np.sqrt(covariance_matrix), np.sqrt(covariance_matrix)
             elif self.args.y_norm in ['std', 'std2']:
                 self.y_shift = np.mean(self.actions, axis=0)
                 centered_data = self.actions - self.y_shift
@@ -229,10 +247,10 @@ class MujocoBuffer(Dataset):
                     self.div = eigenvectors @ np.diag(1 / np.sqrt(eigenvalues)) @ np.linalg.inv(eigenvectors)
                     self.std = eigenvectors @ np.diag(np.sqrt(eigenvalues)) @ np.linalg.inv(eigenvectors)
                 else:
-                    self.div, self.std = 1/np.sqrt(covariance_matrix), np.sqrt(covariance_matrix)
+                    self.div, self.std = 1 / np.sqrt(covariance_matrix), np.sqrt(covariance_matrix)
                 if len(self.args.y_norm) > 3:
-                        self.div = self.div * float(self.args.y_norm[3:])
-                        self.std = self.std / float(self.args.y_norm[3:])
+                    self.div = self.div * float(self.args.y_norm[3:])
+                    self.std = self.std / float(self.args.y_norm[3:])
         else:  # test
             self.y_shift = y_shift
             self.div = div
@@ -241,9 +259,6 @@ class MujocoBuffer(Dataset):
         self.actions = centered_data @ self.div
         # self.actions = centered_data / self.div
 
-    def _to_tensor(self, data: np.ndarray) -> torch.Tensor:
-        return torch.tensor(data, dtype=torch.float32)
-
     # Loads data in d4rl format, i.e. from Dict[str, np.array].
     def _load_dataset(self, data_folder, env, split, data_ratio):
         file_name = '%s_%s.pkl' % (env, split)
@@ -251,10 +266,11 @@ class MujocoBuffer(Dataset):
         try:
             with open(file_path, 'rb') as file:
                 dataset = pickle.load(file)
-                if data_ratio <= 1: 
+                if data_ratio <= 1:
                     self.size = int(dataset['observations'].shape[0] * data_ratio)
-                else: 
-                    self.size = int(data_ratio) if data_ratio<= dataset['observations'].shape[0] else dataset['observations'].shape[0]
+                else:
+                    self.size = int(data_ratio) if data_ratio <= dataset['observations'].shape[0] else \
+                    dataset['observations'].shape[0]
                 self.states = dataset['observations'][:self.size, :]
                 self.actions = dataset['actions'][:self.size, :]
             print('Successfully load dataset from: ', file_path)
@@ -273,7 +289,7 @@ class MujocoBuffer(Dataset):
         print(f"Dataset size: {self.size}; State Dim: {self.state_dim}; Action_Dim: {self.action_dim}.")
 
     def convert_cls_label(self, arr):
-        percentiles = np.percentile(arr[:,0], [20, 40, 60, 80])
+        percentiles = np.percentile(arr[:, 0], [20, 40, 60, 80])
 
         def assign_label(x, percentiles):
             if x <= percentiles[0]:
@@ -287,8 +303,8 @@ class MujocoBuffer(Dataset):
             else:
                 return 4
 
-        cls_labels = np.array([assign_label(x, percentiles) for x in arr[:,0]])
-        return cls_labels
+        cls_labels = np.array([assign_label(x, percentiles) for x in arr[:, 0]])
+        return cls_labels.astype(int)
 
     def get_state_dim(self):
         return self.state_dim
@@ -305,18 +321,18 @@ class MujocoBuffer(Dataset):
         else:
             Sigma = actions.T @ actions / actions.shape[0]
 
-        if self.args.which_y == -1: 
+        if self.args.which_y == -1:
             eig_vals, eig_vecs = np.linalg.eigh(Sigma)
             sqrt_eig_vals = np.sqrt(eig_vals)
             Sigma_sqrt = eig_vecs @ np.diag(sqrt_eig_vals) @ np.linalg.inv(eig_vecs)
             min_eigval, max_eigval = eig_vals[0], eig_vals[-1]
-        else: 
+        else:
             Sigma_sqrt = np.sqrt(Sigma)
             min_eigval, max_eigval = Sigma_sqrt, Sigma_sqrt
 
         return {
-            'mu': mu, 
-            'Sigma': Sigma, 
+            'mu': mu,
+            'Sigma': Sigma,
             'Sigma_sqrt': Sigma_sqrt,
             'min_eigval': min_eigval,
             'max_eigval': max_eigval,
@@ -326,9 +342,12 @@ class MujocoBuffer(Dataset):
         return self.size
 
     def __getitem__(self, idx):
-        states = self.states[idx]
-        actions = self.actions[idx]
-        return self._to_tensor(states), self._to_tensor(actions)
+        states = torch.tensor(self.states[idx], dtype=torch.float32)
+        if getattr(self.args, 'cls', False):
+            actions = torch.tensor(self.actions[idx])
+        else:
+            actions = torch.tensor(self.actions[idx], dtype=torch.float32)
+        return states, actions
 
 
 transform = transforms.Compose([
@@ -345,14 +364,14 @@ class MujocoAblate(Dataset):
             env: str,
             split: str,
             data_ratio,
-            args = None,
-            y_shift = None,
-            div = None,
+            args=None,
+            y_shift=None,
+            div=None,
             x_shift=None,
             x_div=None,
     ):
         self.size = 0
-        self.args=args
+        self.args = args
         self.state_dim = 0
         self.action_dim = 0
         self.env = env
@@ -400,16 +419,16 @@ class MujocoAblate(Dataset):
                     self.div = np.diag(1 / np.sqrt(np.diag(covariance_matrix)))
                     self.std = np.diag(np.sqrt(np.diag(covariance_matrix)))
                 else:
-                    self.div, self.std = 1/np.sqrt(covariance_matrix), np.sqrt(covariance_matrix)
+                    self.div, self.std = 1 / np.sqrt(covariance_matrix), np.sqrt(covariance_matrix)
             elif self.args.y_norm == 'norm0':
                 self.y_shift = np.zeros(self.actions.shape[-1])
-                centered_data = self.actions          # no centering
+                centered_data = self.actions  # no centering
                 covariance_matrix = np.dot(centered_data.T, centered_data) / len(self.actions)
                 if self.args.which_y == -1:
                     self.div = np.diag(1 / np.sqrt(np.diag(covariance_matrix)))
                     self.std = np.diag(np.sqrt(np.diag(covariance_matrix)))
                 else:
-                    self.div, self.std = 1/np.sqrt(covariance_matrix), np.sqrt(covariance_matrix)
+                    self.div, self.std = 1 / np.sqrt(covariance_matrix), np.sqrt(covariance_matrix)
             elif self.args.y_norm in ['std', 'std2']:
                 self.y_shift = np.mean(self.actions, axis=0)
                 centered_data = self.actions - self.y_shift
@@ -419,10 +438,10 @@ class MujocoAblate(Dataset):
                     self.div = eigenvectors @ np.diag(1 / np.sqrt(eigenvalues)) @ np.linalg.inv(eigenvectors)
                     self.std = eigenvectors @ np.diag(np.sqrt(eigenvalues)) @ np.linalg.inv(eigenvectors)
                 else:
-                    self.div, self.std = 1/np.sqrt(covariance_matrix), np.sqrt(covariance_matrix)
+                    self.div, self.std = 1 / np.sqrt(covariance_matrix), np.sqrt(covariance_matrix)
                 if len(self.args.y_norm) > 3:
-                        self.div = self.div * float(self.args.y_norm[3:])
-                        self.std = self.std / float(self.args.y_norm[3:])
+                    self.div = self.div * float(self.args.y_norm[3:])
+                    self.std = self.std / float(self.args.y_norm[3:])
         else:  # test
             self.y_shift = y_shift
             self.div = div
@@ -444,7 +463,8 @@ class MujocoAblate(Dataset):
                 if data_ratio <= 1:
                     self.size = int(dataset['observations'].shape[0] * data_ratio)
                 else:
-                    self.size = int(data_ratio) if data_ratio<= dataset['observations'].shape[0] else dataset['observations'].shape[0]
+                    self.size = int(data_ratio) if data_ratio <= dataset['observations'].shape[0] else \
+                    dataset['observations'].shape[0]
                 self.actions = dataset['actions'][:self.size, :]
             print('Successfully load dataset from: ', file_path)
             if self.args.which_y == -1:

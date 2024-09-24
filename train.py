@@ -14,10 +14,10 @@ from torch.optim.lr_scheduler import LambdaLR
 import torch.nn.functional as F
 from sklearn.decomposition import PCA
 
-
 from dataset import SubDataset, get_dataloader
 from model import RegressionResNet, MLP
-from train_utils import get_feat_pred, gram_schmidt, get_scheduler, get_theoretical_solution, compute_metrics, get_all_feat, plot_var_ratio_hw, plot_var_ratio
+from train_utils import get_feat_pred, gram_schmidt, get_scheduler, get_theoretical_solution, compute_metrics, \
+    get_all_feat, plot_var_ratio_hw, plot_var_ratio
 from utils import print_model_param_nums, set_log_path, log, print_args, matrix_with_angle
 
 
@@ -28,18 +28,18 @@ def train_one_epoch(model, data_loader, optimizer, criterion, args):
     all_feats = []
     for batch_idx, (images, targets) in enumerate(data_loader):
         images, targets = images.to(device, non_blocking=True), targets.float().to(device, non_blocking=True)
-        if targets.ndim == 1: 
+        if targets.ndim == 1:
             targets = targets.unsqueeze(1)
         optimizer.zero_grad()
-        
-        if images.ndim == 4 and model.args.arch.startswith('mlp'): 
+
+        if images.ndim == 4 and model.args.arch.startswith('mlp'):
             images = images.view(images.shape[0], -1)
         outputs, feats = model(images, ret_feat=True)
         all_feats.append(feats.data)
 
         loss = criterion(outputs, targets)
         if args.ufm:
-            l2reg_H = torch.sum(feats**2) * args.lambda_H / args.batch_size
+            l2reg_H = torch.sum(feats ** 2) * args.lambda_H / args.batch_size
             l2reg_W = torch.sum(model.fc.weight ** 2) * args.lambda_W
             loss = loss + l2reg_H + l2reg_W
 
@@ -59,14 +59,17 @@ def main(args):
     train_loader, val_loader = get_dataloader(args)
     if args.dataset in ['swimmer', 'reacher', 'hopper', 'reacher_ab', 'swimmer_ab']:
         args.num_x = train_loader.dataset.state_dim
-        if args.which_y == -1: 
+        if args.which_y == -1:
             args.num_y = train_loader.dataset.action_dim
         else:
             args.num_y = 1
     elif args.dataset in ['mnist']:
-        args.num_x = 28**2
+        args.num_x = 28 ** 2
         args.num_y = 1
-            
+    elif args.dataset in ['cifar10']:
+        args.num_x = 32 * 32 * 3
+        args.num_y = 1
+
     # ================== setup wandb  ==================
 
     os.environ["WANDB_API_KEY"] = "0c0abb4e8b5ce4ee1b1a4ef799edece5f15386ee"
@@ -76,7 +79,7 @@ def main(args):
     os.environ["WANDB_ARTIFACT_DIR"] = "/scratch/lg154/sseg/wandb"
     os.environ["WANDB_DATA_DIR"] = "/scratch/lg154/sseg/wandb/data"
     wandb.login(key='0c0abb4e8b5ce4ee1b1a4ef799edece5f15386ee')
-    wandb.init(project='NRC_sep',# + args.dataset,
+    wandb.init(project='NRC_sep',  # + args.dataset,
                name=args.exp_name.split('/')[-1]
                )
     wandb.config.update(args)
@@ -91,10 +94,10 @@ def main(args):
     if args.arch.startswith('res'):
         model = RegressionResNet(pretrained=True, num_outputs=args.num_y, args=args).to(device)
     elif args.arch.startswith('mlp'):
-        model = MLP(in_dim=args.num_x, out_dim=args.num_y, args=args, arch=args.arch.replace('mlp',''))
+        model = MLP(in_dim=args.num_x, out_dim=args.num_y, args=args, arch=args.arch.replace('mlp', ''))
     if torch.cuda.is_available():
         model = model.cuda()
-    
+
     num_params = sum([param.nelement() for param in model.parameters()])
     log('--- total num of params: {} ---'.format(num_params))
 
@@ -108,7 +111,7 @@ def main(args):
         if args.bias:
             model.fc.bias = nn.Parameter(torch.tensor(theory_stat['mu']).to(device))
             model.fc.bias.requires_grad_(False)
-            
+
         np.random.seed(2021)
         H = np.random.randn(model.fc.weight.shape[1], model.fc.weight.shape[1])
         Q, R = qr(H)
@@ -116,37 +119,41 @@ def main(args):
             import pickle
             with open(os.path.join(os.path.dirname(args.save_dir), args.save_w, 'fc_w.pkl'), 'rb') as f:
                 pretrained_dt = pickle.load(f)
-            
+
             if args.w == 'f':
                 fixed_w = pretrained_dt['w']
-            elif args.w == 'f1': 
+            elif args.w == 'f1':
                 fixed_w = pretrained_dt['w'] @ Q
-            elif args.w == 'f2': 
+            elif args.w == 'f2':
                 WWT = pretrained_dt['w'] @ pretrained_dt['w'].T
                 eigenvalues, eigenvectors = np.linalg.eig(WWT)
-                fixed_w = eigenvectors @ np.diag(np.sqrt(eigenvalues)) @ eigenvectors.T @ Q[0:args.num_y,:]
-            elif args.w == 'f3': 
+                fixed_w = eigenvectors @ np.diag(np.sqrt(eigenvalues)) @ eigenvectors.T @ Q[0:args.num_y, :]
+            elif args.w == 'f3':
                 WWT = pretrained_dt['w'] @ pretrained_dt['w'].T
                 eigenvalues, eigenvectors = np.linalg.eig(WWT)
-                fixed_w = eigenvectors @ np.diag(np.sqrt(eigenvalues)) @ eigenvectors.T @ np.eye(model.fc.weight.shape[0], model.fc.weight.shape[1])
+                fixed_w = eigenvectors @ np.diag(np.sqrt(eigenvalues)) @ eigenvectors.T @ np.eye(
+                    model.fc.weight.shape[0], model.fc.weight.shape[1])
         else:
             if args.w == 'e':
                 eigenvalues, eigenvectors = np.linalg.eig(theory_stat['Sigma_sqrt'])
-                fixed_w = eigenvectors @ np.diag(np.sqrt(eigenvalues)) @ eigenvectors.T @ np.eye(model.fc.weight.shape[0], model.fc.weight.shape[1])
-            elif args.w == 'e1': 
+                fixed_w = eigenvectors @ np.diag(np.sqrt(eigenvalues)) @ eigenvectors.T @ np.eye(
+                    model.fc.weight.shape[0], model.fc.weight.shape[1])
+            elif args.w == 'e1':
                 eigenvalues, eigenvectors = np.linalg.eig(theory_stat['Sigma_sqrt'])
-                fixed_w = eigenvectors @ np.diag(np.sqrt(eigenvalues)) @ eigenvectors.T @ Q[0:args.num_y,:]
-            elif args.w == 'e2': 
+                fixed_w = eigenvectors @ np.diag(np.sqrt(eigenvalues)) @ eigenvectors.T @ Q[0:args.num_y, :]
+            elif args.w == 'e2':
                 eigenvalues, eigenvectors = np.linalg.eig(theory_stat['Sigma_sqrt'])
-                fixed_w = eigenvectors @ np.diag(np.sqrt(eigenvalues)) @ eigenvectors.T @ np.eye(model.fc.weight.shape[0], model.fc.weight.shape[1])
-            elif args.w == 'o': 
-                fixed_w = Q[0:args.num_y,:]
-            elif args.w == 'a': 
-                fixed_w = matrix_with_angle(angle=np.pi/4)
-            
+                fixed_w = eigenvectors @ np.diag(np.sqrt(eigenvalues)) @ eigenvectors.T @ np.eye(
+                    model.fc.weight.shape[0], model.fc.weight.shape[1])
+            elif args.w == 'o':
+                fixed_w = Q[0:args.num_y, :]
+            elif args.w == 'a':
+                fixed_w = matrix_with_angle(angle=np.pi / 4)
+
         model.fc.weight = nn.Parameter(torch.tensor(fixed_w, dtype=torch.float32).to(device))
         model.fc.weight.requires_grad_(False)
-        print('-----fixed W loaded from {}'.format(os.path.join(os.path.dirname(args.save_dir), args.save_w, 'fc_w.pkl')))
+        print(
+            '-----fixed W loaded from {}'.format(os.path.join(os.path.dirname(args.save_dir), args.save_w, 'fc_w.pkl')))
 
     # ==== optimizer and scheduler
     if args.ufm:
@@ -154,7 +161,7 @@ def main(args):
     else:
         optimizer = torch.optim.SGD(model.parameters(), momentum=0.9, lr=args.lr, weight_decay=args.wd)
     scheduler = get_scheduler(args, optimizer)
-    if args.warmup>0: 
+    if args.warmup > 0:
         warmup_scheduler = LambdaLR(optimizer, lr_lambda=lambda epoch: (epoch + 1) / args.warmup)
 
     if args.resume:
@@ -173,49 +180,51 @@ def main(args):
     criterion = nn.MSELoss()
     wandb.watch(model, criterion, log="all", log_freq=20)
     for epoch in range(args.start_epoch, args.max_epoch):
-        
-        if epoch == 0 or epoch% args.log_freq == 0: 
+
+        if epoch == 0 or epoch % args.log_freq == 0:
             # === cosine between Wi's
             W = model.fc.weight.data  # [2, 512]
             WWT = (W @ W.T).cpu().numpy()
 
             # ===============compute train mse and projection error==================
             all_feats, preds, labels = get_feat_pred(model, train_loader)
-            if args.dataset == 'mnist': labels = labels.float()
+            if args.dataset in ['mnist', 'cifar10']: labels = labels.float()
             torch.cuda.empty_cache()
             if args.y_norm not in ['null', 'n']:
-                y_shift, std = torch.tensor(train_loader.dataset.y_shift).to(preds.device), torch.tensor(train_loader.dataset.std).to(preds.device)
+                y_shift, std = torch.tensor(train_loader.dataset.y_shift).to(preds.device), torch.tensor(
+                    train_loader.dataset.std).to(preds.device)
                 preds = preds @ std + y_shift
                 labels = labels @ std + y_shift
             if preds.shape[-1] == 2:
-                train_loss0 = torch.sum((preds[:,0] - labels[:,0])**2)/preds.shape[0]
-                train_loss1 = torch.sum((preds[:,1] - labels[:,1])**2)/preds.shape[0]
-            train_loss = torch.mean((preds - labels)**2)
-            
+                train_loss0 = torch.sum((preds[:, 0] - labels[:, 0]) ** 2) / preds.shape[0]
+                train_loss1 = torch.sum((preds[:, 1] - labels[:, 1]) ** 2) / preds.shape[0]
+            train_loss = torch.mean((preds - labels) ** 2)
+
             nc_train = compute_metrics(W, all_feats)
             train_hnorm = torch.norm(all_feats, p=2, dim=1).mean().item()
             train_wnorm = torch.norm(W, p=2, dim=1).mean().item()
 
             # ===============compute val mse and projection error==================
             all_feats, preds, labels = get_feat_pred(model, val_loader)
-            if args.dataset == 'mnist': labels = labels.float()
+            if args.dataset in ['mnist', 'cifar10']: labels = labels.float()
             torch.cuda.empty_cache()
             if args.y_norm not in ['null', 'n']:
-                y_shift, std = torch.tensor(train_loader.dataset.y_shift).to(preds.device), torch.tensor(train_loader.dataset.std).to(preds.device)
+                y_shift, std = torch.tensor(train_loader.dataset.y_shift).to(preds.device), torch.tensor(
+                    train_loader.dataset.std).to(preds.device)
                 preds = preds @ std + y_shift
                 labels = labels @ std + y_shift
-            if preds.shape[-1] == 2: 
-                val_loss0 = torch.sum((preds[:,0] - labels[:,0])**2)/preds.shape[0]
-                val_loss1 = torch.sum((preds[:,1] - labels[:,1])**2)/preds.shape[0]
-            val_loss = torch.mean((preds - labels)**2)
-            
+            if preds.shape[-1] == 2:
+                val_loss0 = torch.sum((preds[:, 0] - labels[:, 0]) ** 2) / preds.shape[0]
+                val_loss1 = torch.sum((preds[:, 1] - labels[:, 1]) ** 2) / preds.shape[0]
+            val_loss = torch.mean((preds - labels) ** 2)
+
             nc_val = compute_metrics(W, all_feats)
             val_hnorm = torch.norm(all_feats, p=2, dim=1).mean().item()
             del all_feats, preds, labels
             torch.cuda.empty_cache()
 
             # ================ NC2 ================
-            if args.num_y >= 2 : 
+            if args.num_y >= 2:
                 WWT_normalized = WWT / np.linalg.norm(WWT)
                 min_eigval = theory_stat['min_eigval']
                 Sigma_sqrt = theory_stat['Sigma_sqrt']
@@ -237,7 +246,7 @@ def main(args):
                     step=epoch)
                 best_c = c_to_plot[np.argmin(NC3_to_plot)]
                 NC3 = min(NC3_to_plot)
-            else: 
+            else:
                 best_c, NC3 = 0, 0
 
             # ================ log to wandb ================
@@ -254,7 +263,7 @@ def main(args):
                 'EVR/EVR3': nc_train['EVR3'],
                 'EVR/EVR4': nc_train['EVR4'],
                 'EVR/EVR5': nc_train['EVR5'],
-                
+
                 'CVR/CVR5': nc_train['CVR5'],
                 'CVR/CVR10': nc_train['CVR10'],
                 'CVR/CVR15': nc_train['CVR15'],
@@ -291,8 +300,8 @@ def main(args):
                 wandb.log({'mse/train_mse1': train_loss, 'mse/val_mse1': val_loss}, step=epoch)
 
         # ================ log the figure ================
-        if epoch == 0 or (epoch + 1) % (args.log_freq * 20) == 0:
-            include_input = False if args.dataset in ['mnist'] else True
+        if epoch == 0 or (epoch + 1) % (args.max_epoch // 10) == 0:
+            include_input = False if args.dataset in ['mnist', 'cifar10'] else True
             feat_by_layer = get_all_feat(model, train_loader, include_input=include_input)
             vr_by_layer = {}
             for layer_id, feat in feat_by_layer.items():
@@ -300,10 +309,13 @@ def main(args):
                 U, S, Vt = np.linalg.svd(cov)
                 var_ratio = S / np.sum(S)
                 vr_by_layer[layer_id] = var_ratio
-            
-            if args.arch.startswith('mlp'): 
-                weight_by_layer = {id: model.backbone[id][0].weight.data.cpu().numpy() for id in range(len(model.backbone))}
+
+            if args.arch.startswith('mlp'):
+                weight_by_layer = {id: model.backbone[id][0].weight.data.cpu().numpy() for id in
+                                   range(len(model.backbone))}
                 weight_by_layer[len(model.backbone)] = model.fc.weight.data.cpu().numpy()
+                if not include_input:
+                    weight_by_layer = {k - 1: v for k, v in weight_by_layer.items() if k > 0}
                 wr_by_layer = {}
                 for layer_id, w in weight_by_layer.items():
                     cov = w.T @ w
@@ -311,11 +323,11 @@ def main(args):
                     var_ratio = S / np.sum(S)
                     wr_by_layer[layer_id] = var_ratio
                 fig = plot_var_ratio_hw(vr_by_layer, wr_by_layer)
-            else: 
+            else:
                 fig = plot_var_ratio(vr_by_layer)
             wandb.log({"chart": wandb.Image(fig)}, step=epoch)
 
-        if (epoch == 0 or (epoch+1) % args.save_freq == 0) and args.save_freq > 0:
+        if (epoch == 0 or (epoch + 1) % args.save_freq == 0) and args.save_freq > 0:
             ckpt_path = os.path.join(args.save_dir, 'ep{}_ckpt.pth'.format(epoch))
             torch.save({
                 'epoch': epoch,
@@ -332,11 +344,11 @@ def main(args):
             warmup_scheduler.step()
         else:
             scheduler.step()
-        # =============== save w 
-        if args.save_w=='t' and (epoch+1)%100==0: 
-            import pickle 
-            with open(os.path.join(args.save_dir, 'fc_w.pkl'), 'wb') as f: 
-                pickle.dump({'w':model.fc.weight.data.cpu().numpy(), 'wwt':W_outer, 'Sigma_sqrt': Sigma_sqrt}, f)
+        # =============== save w
+        if args.save_w == 't' and (epoch + 1) % 100 == 0:
+            import pickle
+            with open(os.path.join(args.save_dir, 'fc_w.pkl'), 'wb') as f:
+                pickle.dump({'w': model.fc.weight.data.cpu().numpy(), 'wwt': W_outer, 'Sigma_sqrt': Sigma_sqrt}, f)
 
 
 def set_seed(SEED=666):
@@ -353,7 +365,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Regression NC")
     parser.add_argument('--dataset', type=str, default='Carla')
     parser.add_argument('--data_ratio', type=float, default=1.0)
-    
+
     parser.add_argument('--arch', type=str, default='resnet18')
     parser.add_argument('--num_y', type=int, default=2)
     parser.add_argument('--which_y', type=int, default=-1)
@@ -361,7 +373,7 @@ if __name__ == '__main__':
     parser.add_argument('--x_norm', type=str, default='null')
     parser.add_argument('--act', type=str, default='relu')
     parser.add_argument('--w', type=str, default='null')
-    parser.add_argument('--bn', type=str, default='f') # f|t|p false|true|parametric
+    parser.add_argument('--bn', type=str, default='f')  # f|t|p false|true|parametric
     parser.add_argument('--drop', type=float, default='0')
 
     parser.add_argument('--max_epoch', type=int, default=1000)
@@ -387,9 +399,9 @@ if __name__ == '__main__':
     parser.add_argument("--seed", type=int, default=2021, help="random seed")
     parser.add_argument('--exp_name', type=str, default='exp')
     args = parser.parse_args()
-    
+
     args.save_dir = os.path.join("./result/{}/".format(args.dataset), args.exp_name)
-    if args.resume is not None: 
+    if args.resume is not None:
         args.resume = os.path.join('./result', args.resume)
     if not os.path.exists(args.save_dir):
         os.makedirs(args.save_dir)

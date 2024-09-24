@@ -6,8 +6,7 @@
 #SBATCH --cpus-per-task=2
 #SBATCH --mem=80GB
 #SBATCH --time=48:00:00
-#SBATCH --gres=gpu
-#SBATCH --partition=a100_1,a100_2,v100,rtx8000
+
 
 # job info
 FEAT=$1
@@ -24,7 +23,7 @@ singularity exec --nv \
 ${sif_path} /bin/bash -c "
 source /ext3/env.sh
 python train.py --batch_size 1024 --arch ${ARCH} --feat ${FEAT} --lr 1e-3 --warmup 10 --ufm --exp_name ufm_${ARCH}_${FEAT}_ob
- " 
+ "
 
 
- # --bias 
+ # --bias

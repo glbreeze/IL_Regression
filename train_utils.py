@@ -13,9 +13,10 @@ def get_scheduler(args, optimizer):
     :param batches: the number of iterations in each epochs
     :return: scheduler
     """
-        
+
     if args.scheduler in ['ms', 'multi_step']:
-        return optim.lr_scheduler.MultiStepLR(optimizer, milestones=[args.max_epoch//4, args.max_epoch//2], gamma=0.2)
+        return optim.lr_scheduler.MultiStepLR(optimizer, milestones=[args.max_epoch // 4, args.max_epoch // 2],
+                                              gamma=0.2)
     elif args.scheduler in ['cos', 'cosine']:
         return optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.max_epoch)
 
@@ -28,9 +29,9 @@ def get_feat_pred(model, loader):
     with torch.no_grad():
         for i, (input, target) in enumerate(loader):
             input, target = input.to(device), target.to(device)
-            if target.ndim == 1: 
+            if target.ndim == 1:
                 target = target.unsqueeze(1)
-            if input.ndim == 4 and model.args.arch.startswith('mlp'): 
+            if input.ndim == 4 and model.args.arch.startswith('mlp'):
                 input = input.view(input.shape[0], -1)
             pred, feat = model(input, ret_feat=True)
 
@@ -51,7 +52,7 @@ def get_all_feat(model, loader, include_input=True):
     with torch.no_grad():
         for batch_id, (input, target) in enumerate(loader):
             input, target = input.to(device), target.to(device)
-            if input.ndim == 4 and model.args.arch.startswith('mlp'): 
+            if input.ndim == 4 and model.args.arch.startswith('mlp'):
                 input = input.view(input.shape[0], -1)
 
             feat_list = model.forward_feat(input)
@@ -92,6 +93,8 @@ def plot_var_ratio_hw(vr_dt, wr_dt):
         axes[1].plot(np.arange(len(wr_ratio)), wr_ratio, color=cmap(norm(id)), label=f'layer{id}')
     axes[0].legend()
     axes[1].legend()
+    axes[0].set_title(r'Variance ratio of $X^T X$')
+    axes[1].set_title(r'Variance ratio of $W^T W$')
     return fig
 
 
@@ -154,16 +157,16 @@ def compute_metrics(W, H, y_dim=None):
 
     result['nc1'] = result[f'nc1_pc{y_dim}']
     result['nc1n'] = result[f'nc1n_pc{y_dim}']
-    
-    for k in range(5, 31, 5): 
+
+    for k in range(5, 31, 5):
         result[f'CVR{k}'] = np.sum(pca_for_H.explained_variance_ratio_[:k])
-        
+
     try:
         inverse_mat = torch.inverse(W @ W.T)
     except Exception as e:
         print(e)
     P_W = W.T @ inverse_mat @ W
-    result['nc2'] = torch.sum((H - H @ P_W)**2).item() / len(H)
+    result['nc2'] = torch.sum((H - H @ P_W) ** 2).item() / len(H)
     result['nc2n'] = torch.mean(torch.norm(H_normalized @ P_W - H_normalized, p=2, dim=1) ** 2).item()
 
     # Projection error with Gram-Schmidt
@@ -185,12 +188,12 @@ def get_theoretical_solution(train_loader, args, all_labels=None, center=False):
             for i, (input, target) in enumerate(train_loader):
                 target = target.to(device)
                 all_labels.append(target)
-            all_labels = torch.cat(all_labels).float()   # [N, 2]
+            all_labels = torch.cat(all_labels).float()  # [N, 2]
 
     mu = torch.mean(all_labels, dim=0)
     if center:
         all_labels = all_labels - mu
-    Sigma = (all_labels.T @ all_labels)/len(all_labels)
+    Sigma = (all_labels.T @ all_labels) / len(all_labels)
     Sigma = Sigma.cpu().numpy()
 
     if args.num_y >= 2:
@@ -199,17 +202,17 @@ def get_theoretical_solution(train_loader, args, all_labels=None, center=False):
         Sigma_sqrt = eigenvectors @ np.diag(sqrt_eigenvalues) @ np.linalg.inv(eigenvectors)
         min_eigval = eigenvalues[0]
         max_eigval = eigenvalues[-1]
-    elif args.num_y == 1: 
+    elif args.num_y == 1:
         Sigma_sqrt = np.sqrt(Sigma)
         min_eigval, max_eigval = Sigma_sqrt, Sigma_sqrt
 
     theory_stat = {
-            'mu': mu.cpu().numpy(), 
-            'Sigma': Sigma, 
-            'Sigma_sqrt': Sigma_sqrt,
-            'min_eigval': min_eigval,
-            'max_eigval': max_eigval,
-        }
+        'mu': mu.cpu().numpy(),
+        'Sigma': Sigma,
+        'Sigma_sqrt': Sigma_sqrt,
+        'min_eigval': min_eigval,
+        'max_eigval': max_eigval,
+    }
     return theory_stat
 
 
@@ -218,8 +221,8 @@ def get_theoretical_solution(train_loader, args, all_labels=None, center=False):
 def compute_ETF(W, device):  # W [K, 512]
     K = W.shape[0]
     # W = W - torch.mean(W, dim=0, keepdim=True)
-    WWT = torch.mm(W, W.T)            # [K, 512] [512, K] -> [K, K]
-    WWT /= torch.norm(WWT, p='fro')   # [K, K]
+    WWT = torch.mm(W, W.T)  # [K, 512] [512, K] -> [K, K]
+    WWT /= torch.norm(WWT, p='fro')  # [K, K]
 
     sub = (torch.eye(K) - 1 / K * torch.ones((K, K))).to(device) / pow(K - 1, 0.5)
     ETF_metric = torch.norm(WWT - sub, p='fro')
@@ -231,7 +234,7 @@ def compute_W_H_relation(W, H, device):  # W:[K, 512] H:[512, K]
     K = W.shape[0]
 
     # W = W - torch.mean(W, dim=0, keepdim=True)
-    WH = torch.mm(W, H.to(device))   # [K, 512] [512, K]
+    WH = torch.mm(W, H.to(device))  # [K, 512] [512, K]
     WH /= torch.norm(WH, p='fro')
     sub = 1 / pow(K - 1, 0.5) * (torch.eye(K) - 1 / K * torch.ones((K, K))).to(device)
 
@@ -250,19 +253,18 @@ def analysis_feat(labels, feats, num_classes, W=None):
 
     # ====== compute mean and var for each class
     for c in range(num_classes):
-
-        feats_c = feats[labels == c]   # [N, 512]
+        feats_c = feats[labels == c]  # [N, 512]
 
         num_cls[c] = len(feats_c)
         mean_cls[c] = torch.mean(feats_c, dim=0)
 
         # update within-class cov
-        X = feats_c - mean_cls[c].unsqueeze(0)   # [N, 512]
-        cov_cls[c] = X.T @ X / num_cls[c]        # [512, 512]
-        sse_cls[c] = X.T @ X                     # [512, 512]
+        X = feats_c - mean_cls[c].unsqueeze(0)  # [N, 512]
+        cov_cls[c] = X.T @ X / num_cls[c]  # [512, 512]
+        sse_cls[c] = X.T @ X  # [512, 512]
 
     # global mean
-    M = torch.stack(mean_cls)        # [K, 512]
+    M = torch.stack(mean_cls)  # [K, 512]
     mean_all = torch.mean(M, dim=0)  # [512]
 
     Sigma_b = (M - mean_all.unsqueeze(0)).T @ (M - mean_all.unsqueeze(0)) / num_classes

@@ -29,8 +29,8 @@ def train_one_epoch(model, data_loader, optimizer, criterion, args):
     for batch_idx, (images, targets) in enumerate(data_loader):
         images, targets = images.to(device, non_blocking=True), targets.to(device, non_blocking=True)
         optimizer.zero_grad()
-        
-        if images.ndim == 4 and model.args.arch.startswith('mlp'): 
+
+        if images.ndim == 4 and model.args.arch.startswith('mlp'):
             images = images.view(images.shape[0], -1)
         outputs, feats = model(images, ret_feat=True)
 
@@ -56,10 +56,13 @@ def main(args):
     train_loader, val_loader = get_dataloader(args)
     if args.dataset == 'mnist':
         args.num_y = 10
-        args.num_x = 28*28
-    elif args.dataset == 'reacher':
+        args.num_x = 28 * 28
+    elif args.dataset in ['reacher', 'swimmer', 'hopper']:
         args.num_x = train_loader.dataset.state_dim
         args.num_y = 5
+    elif args.dataset == 'cifar10':
+        args.num_y = 10
+        args.num_x = 32 * 32 * 3
 
     # ================== setup wandb  ==================
 
@@ -71,7 +74,8 @@ def main(args):
     os.environ["WANDB_DATA_DIR"] = "/scratch/lg154/sseg/wandb/data"
     wandb.login(key='0c0abb4e8b5ce4ee1b1a4ef799edece5f15386ee')
     wandb.init(project='NRC_sep',  # + args.dataset,
-               name=args.exp_name.split('/')[-1]
+               name=args.exp_name.split('/')[-1],
+               settings=wandb.Settings(start_method="fork")
                )
     wandb.config.update(args)
 
@@ -169,30 +173,34 @@ def main(args):
             }
             wandb.log(nc_dt, step=epoch)
 
-            # ================ log the figure ================
-            if epoch == 0 or (epoch + 1) % (args.max_epoch//5) == 0:
-                include_input = False if args.dataset in ['mnist'] else True
-                feat_by_layer = get_all_feat(model, train_loader, include_input=include_input)
-                vr_by_layer = {}
-                for layer_id, feat in feat_by_layer.items():
-                    cov = feat.T @ feat / len(feat)
+        # ================ log the figure ================
+        if epoch == 0 or (epoch + 1) % (args.max_epoch // 10) == 0:
+            include_input = False if args.dataset in ['mnist', 'cifar10'] else True
+            feat_by_layer = get_all_feat(model, train_loader, include_input=include_input)
+            vr_by_layer = {}
+            for layer_id, feat in feat_by_layer.items():
+                cov = feat.T @ feat / len(feat)
+                U, S, Vt = np.linalg.svd(cov)
+                var_ratio = S / np.sum(S)
+                vr_by_layer[layer_id] = var_ratio
+
+            if args.arch.startswith('mlp'):
+
+                weight_by_layer = {id: model.backbone[id][0].weight.data.cpu().numpy() for id in
+                                   range(len(model.backbone))}
+                weight_by_layer[len(model.backbone)] = model.fc.weight.data.cpu().numpy()
+                if not include_input:
+                    weight_by_layer = {k - 1: v for k, v in weight_by_layer.items() if k > 0}
+                wr_by_layer = {}
+                for layer_id, w in weight_by_layer.items():
+                    cov = w.T @ w
                     U, S, Vt = np.linalg.svd(cov)
                     var_ratio = S / np.sum(S)
-                    vr_by_layer[layer_id] = var_ratio
-
-                if args.arch.startswith('mlp'):
-                    weight_by_layer = {id: model.backbone[id][0].weight.data.cpu().numpy() for id in range(len(model.backbone))}
-                    weight_by_layer[len(model.backbone)] = model.fc.weight.data.cpu().numpy()
-                    wr_by_layer = {}
-                    for layer_id, w in weight_by_layer.items():
-                        cov = w.T @ w
-                        U, S, Vt = np.linalg.svd(cov)
-                        var_ratio = S / np.sum(S)
-                        wr_by_layer[layer_id] = var_ratio
-                    fig = plot_var_ratio_hw(vr_by_layer, wr_by_layer)
-                else:
-                    fig = plot_var_ratio(vr_by_layer)
-                wandb.log({"chart": wandb.Image(fig)}, step=epoch)
+                    wr_by_layer[layer_id] = var_ratio
+                fig = plot_var_ratio_hw(vr_by_layer, wr_by_layer)
+            else:
+                fig = plot_var_ratio(vr_by_layer)
+            wandb.log({"chart": wandb.Image(fig)}, step=epoch)
 
         if (epoch == 0 or (epoch + 1) % args.save_freq == 0) and args.save_freq > 0:
             ckpt_path = os.path.join(args.save_dir, 'ep{}_ckpt.pth'.format(epoch))
@@ -207,7 +215,8 @@ def main(args):
 
         # =============== train model ==================
         train_loss, train_acc = train_one_epoch(model, train_loader, optimizer, criterion, args=args)
-        wandb.log({'cls_nc/train_loss': train_loss, 'cls_nc/run_acc': train_acc}, step=epoch)
+        if epoch % 5 == 0:
+            wandb.log({'cls_nc/train_loss': train_loss, 'cls_nc/run_acc': train_acc}, step=epoch)
         if epoch < args.warmup:
             warmup_scheduler.step()
         else:
@@ -229,7 +238,6 @@ if __name__ == '__main__':
     parser.add_argument('--dataset', type=str, default='mnist')
     parser.add_argument('--data_ratio', type=float, default=1.0)
     parser.add_argument('--cls', action='store_true', default=False)
-
 
     parser.add_argument('--arch', type=str, default='resnet18')
     parser.add_argument('--num_y', type=int, default=2)
@@ -255,7 +263,8 @@ if __name__ == '__main__':
     parser.add_argument('--bias', default=False, action='store_true')
 
     parser.add_argument('--resume', type=str, default=None)
-    parser.add_argument('--start_epoch', default=0, type=int, metavar='N', help='manual epoch number (useful on restarts)')
+    parser.add_argument('--start_epoch', default=0, type=int, metavar='N',
+                        help='manual epoch number (useful on restarts)')
     parser.add_argument('--save_freq', default=-1, type=int)
     parser.add_argument('--log_freq', default=10, type=int)
 
