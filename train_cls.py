@@ -178,12 +178,14 @@ def main(args):
             wandb.log(nc_dt, step=epoch)
 
         # ================ log the figure ================
-        if epoch == 0 or (epoch + 1) % (args.max_epoch // 50) == 0:
+        if epoch == 0 or (epoch + 1) % (args.max_epoch // 20) == 0:
             def get_rank(m_by_layer):
                 vr_by_layer = {}
                 rk_by_layer = {}
-                for layer_id, cov in m_by_layer.items():
+                for layer_id, m in m_by_layer.items():
+                    cov = m.T @ m
                     U, S, Vt = np.linalg.svd(cov)
+                    S = S[: min(m.size(0), m.size(1))]
 
                     s_ratio = S / np.sum(S)
                     entropy = -np.sum(s_ratio * np.log(s_ratio + 1e-12))
@@ -193,9 +195,8 @@ def main(args):
                     rk_by_layer[layer_id] = effective_rank
                 return vr_by_layer, rk_by_layer
 
-            include_input = False if args.dataset in ['mnist', 'cifar10'] else True
+            include_input = False if args.dataset in ['mnist', 'cifar10', 'cifar100'] else True
             feat_by_layer = get_all_feat(model, train_loader, include_input=include_input)
-            cov_by_layer_feat = {layer_id: feat.T @ feat / len(feat) for layer_id, feat in feat_by_layer.items()}
 
             weight_by_layer = {id: model.backbone[id][0] for id in range(len(model.backbone))}
             for id in weight_by_layer.keys():
@@ -205,10 +206,9 @@ def main(args):
                     weight_by_layer[id] = weight.cpu().numpy()
                 else:
                     weight_by_layer[id] = weight.view(weight.size(0), -1).cpu().numpy()
-            cov_by_layer_w = {id: w.T @ w for id, w in weight_by_layer.items()}
 
-            vr_feat, rk_feat = get_rank(cov_by_layer_feat)
-            vr_weight, rk_weight = get_rank(cov_by_layer_w)
+            vr_feat, rk_feat = get_rank(feat_by_layer)
+            vr_weight, rk_weight = get_rank(weight_by_layer)
 
             fig = plot_var_ratio_hw(vr_feat, vr_weight)
             wandb.log({"chart": wandb.Image(fig)}, step=epoch)

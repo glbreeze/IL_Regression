@@ -56,7 +56,7 @@ class RegressionResNet(nn.Module):
         feat_list = []
         for m in self.backbone:
             x = m(x)
-            feat_list.append(F.adaptive_avg_pool2d(x, (1, 1)).view(x.size(0), -1))
+            feat_list.append(x)
         return feat_list
 
 
@@ -192,6 +192,7 @@ class VGG(nn.Module):
         for m in self.backbone:
             x = m(x)
             feat_list.append(x)
+        feat_list += [self.feat(x)]
         return feat_list
 
 

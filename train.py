@@ -15,7 +15,7 @@ import torch.nn.functional as F
 from sklearn.decomposition import PCA
 
 from dataset import SubDataset, get_dataloader
-from model import RegressionResNet, MLP
+from model import RegressionResNet, MLP, VGG, LeNet
 from train_utils import get_feat_pred, gram_schmidt, get_scheduler, get_theoretical_solution, compute_metrics, \
     get_all_feat, plot_var_ratio_hw, plot_var_ratio
 from utils import print_model_param_nums, set_log_path, log, print_args, matrix_with_angle
@@ -95,6 +95,10 @@ def main(args):
         model = RegressionResNet(pretrained=True, num_outputs=args.num_y, args=args).to(device)
     elif args.arch.startswith('mlp'):
         model = MLP(in_dim=args.num_x, out_dim=args.num_y, args=args, arch=args.arch.replace('mlp', ''))
+    elif args.arch.startswith('vgg'):
+        model = VGG(num_classes=args.num_y, args=args)
+    elif args.arch.startswith('le'):
+        model = LeNet(num_classes=args.num_y, args=args)
     if torch.cuda.is_available():
         model = model.cuda()
 
@@ -300,32 +304,43 @@ def main(args):
                 wandb.log({'mse/train_mse1': train_loss, 'mse/val_mse1': val_loss}, step=epoch)
 
         # ================ log the figure ================
-        if epoch == 0 or (epoch + 1) % (args.max_epoch // 10) == 0:
-            include_input = False if args.dataset in ['mnist', 'cifar10'] else True
-            feat_by_layer = get_all_feat(model, train_loader, include_input=include_input)
-            vr_by_layer = {}
-            for layer_id, feat in feat_by_layer.items():
-                cov = feat.T @ feat / len(feat)
-                U, S, Vt = np.linalg.svd(cov)
-                var_ratio = S / np.sum(S)
-                vr_by_layer[layer_id] = var_ratio
-
-            if args.arch.startswith('mlp'):
-                weight_by_layer = {id: model.backbone[id][0].weight.data.cpu().numpy() for id in
-                                   range(len(model.backbone))}
-                weight_by_layer[len(model.backbone)] = model.fc.weight.data.cpu().numpy()
-                if not include_input:
-                    weight_by_layer = {k - 1: v for k, v in weight_by_layer.items() if k > 0}
-                wr_by_layer = {}
-                for layer_id, w in weight_by_layer.items():
-                    cov = w.T @ w
+        if epoch == 0 or (epoch + 1) % (args.max_epoch // 20) == 0:
+            def get_rank(m_by_layer):
+                vr_by_layer = {}
+                rk_by_layer = {}
+                for layer_id, m in m_by_layer.items():
+                    cov = m.T @ m
                     U, S, Vt = np.linalg.svd(cov)
-                    var_ratio = S / np.sum(S)
-                    wr_by_layer[layer_id] = var_ratio
-                fig = plot_var_ratio_hw(vr_by_layer, wr_by_layer)
-            else:
-                fig = plot_var_ratio(vr_by_layer)
+                    S = S[: min(m.size(0), m.size(1))]
+
+                    s_ratio = S / np.sum(S)
+                    entropy = -np.sum(s_ratio * np.log(s_ratio + 1e-12))
+                    effective_rank = np.exp(entropy)
+
+                    vr_by_layer[layer_id] = s_ratio
+                    rk_by_layer[layer_id] = effective_rank
+                return vr_by_layer, rk_by_layer
+
+            include_input = False if args.dataset in ['mnist', 'cifar10', 'cifar100'] else True
+            feat_by_layer = get_all_feat(model, train_loader, include_input=include_input)
+
+            weight_by_layer = {id: model.backbone[id][0] for id in range(len(model.backbone))}
+            for id in weight_by_layer.keys():
+                layer = weight_by_layer[id]
+                weight = layer.weight.data
+                if isinstance(layer, nn.Linear):
+                    weight_by_layer[id] = weight.cpu().numpy()
+                else:
+                    weight_by_layer[id] = weight.view(weight.size(0), -1).cpu().numpy()
+
+            vr_feat, rk_feat = get_rank(feat_by_layer)
+            vr_weight, rk_weight = get_rank(weight_by_layer)
+
+            fig = plot_var_ratio_hw(vr_feat, vr_weight)
             wandb.log({"chart": wandb.Image(fig)}, step=epoch)
+
+            wandb.log({f'feat_rank/{id}': rk for id, rk in rk_feat.items()}, step=epoch)
+            wandb.log({f'weight_rank/{id}': rk for id, rk in rk_weight.items()}, step=epoch)
 
         if (epoch == 0 or (epoch + 1) % args.save_freq == 0) and args.save_freq > 0:
             ckpt_path = os.path.join(args.save_dir, 'ep{}_ckpt.pth'.format(epoch))

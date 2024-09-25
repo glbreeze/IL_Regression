@@ -52,8 +52,11 @@ def get_all_feat(model, loader, include_input=True):
     with torch.no_grad():
         for batch_id, (input, target) in enumerate(loader):
             input, target = input.to(device), target.to(device)
-            if input.ndim == 4 and model.args.arch.startswith('mlp'):
-                input = input.view(input.shape[0], -1)
+            if input.ndim == 4:
+                if model.args.arch.startswith('mlp'):
+                    input = input.view(input.shape[0], -1)
+                else:
+                    input = torch.mean(input, dim=(2,3))
 
             feat_list = model.forward_feat(input)
             if include_input:
@@ -63,6 +66,7 @@ def get_all_feat(model, loader, include_input=True):
                 feat_by_layer = {layer_id: [] for layer_id in range(len(feat_list))}
 
             for layer_id, feat in enumerate(feat_list):
+                if feat.ndim == 4: feat = torch.mean(feat, dim=(2, 3))
                 feat_by_layer[layer_id].append(feat)
 
         for layer_id, layer_feat in feat_by_layer.items():
