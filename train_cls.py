@@ -178,7 +178,7 @@ def main(args):
             wandb.log(nc_dt, step=epoch)
 
         # ================ log the figure ================
-        if epoch == 0 or (epoch + 1) % (args.max_epoch // 10) == 0:
+        if epoch == 0 or (epoch + 1) % (args.max_epoch // 50) == 0:
             def get_rank(m_by_layer):
                 vr_by_layer = {}
                 rk_by_layer = {}
@@ -213,8 +213,8 @@ def main(args):
             fig = plot_var_ratio_hw(vr_feat, vr_weight)
             wandb.log({"chart": wandb.Image(fig)}, step=epoch)
 
-            wandb.log({f'feat_rank/{id}': rk for id, rk in rk_feat}, step=epoch)
-            wandb.log({f'weight_rank/{id}': rk for id, rk in rk_weight}, step=epoch)
+            wandb.log({f'feat_rank/{id}': rk for id, rk in rk_feat.items()}, step=epoch)
+            wandb.log({f'weight_rank/{id}': rk for id, rk in rk_weight.items()}, step=epoch)
 
         if (epoch == 0 or (epoch + 1) % args.save_freq == 0) and args.save_freq > 0:
             ckpt_path = os.path.join(args.save_dir, 'ep{}_ckpt.pth'.format(epoch))
