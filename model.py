@@ -14,6 +14,8 @@ class RegressionResNet(nn.Module):
 
         if args.arch == 'resnet18' or args.arch == 'res18':
             resnet_model = models.resnet18(pretrained=pretrained)
+        elif args.arch == 'resnet34' or args.arch == 'res34':
+            resnet_model = models.resnet34(pretrained=pretrained)
         elif args.arch == 'resnet50' or args.arch == 'res50':
             resnet_model = models.resnet50(pretrained=pretrained)
         

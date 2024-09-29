@@ -69,6 +69,8 @@ def main(args):
     elif args.dataset in ['cifar10']:
         args.num_x = 32 * 32 * 3
         args.num_y = 1
+    elif args.dataset == 'carla2d':
+        args.num_y = 2
 
     # ================== setup wandb  ==================
 
@@ -311,7 +313,7 @@ def main(args):
                 for layer_id, m in m_by_layer.items():
                     cov = m.T @ m
                     U, S, Vt = np.linalg.svd(cov)
-                    S = S[: min(m.size(0), m.size(1))]
+                    S = S[: min(m.shape[0], m.shape[1])]
 
                     s_ratio = S / np.sum(S)
                     entropy = -np.sum(s_ratio * np.log(s_ratio + 1e-12))

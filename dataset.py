@@ -11,16 +11,32 @@ from torchvision import transforms, datasets
 DATA_FOLDER = '../dataset/mujoco_data/'
 
 
+def print_memory_usage(description):
+    print(f"{description}:")
+    print(f"  Memory Allocated: {torch.cuda.memory_allocated() / 1024 ** 3:.2f} GB")
+    print(f"  Memory Reserved: {torch.cuda.memory_reserved() / 1024 ** 3:.2f} GB")
+
+
 def get_dataloader(args):
-    if args.dataset == 'Carla' or args.dataset == 'carla':
-        train_dataset = SubDataset('/vast/lg154/Carla_JPG/Train/train_list.txt',
-                                   '/vast/lg154/Carla_JPG/Train/sub_targets.pkl', transform=transform, dim=args.num_y)
-        train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=4,
-                                  pin_memory=True, persistent_workers=True)
-        val_dataset = SubDataset('/vast/lg154/Carla_JPG/Val/val_list.txt', '/vast/lg154/Carla_JPG/Val/sub_targets.pkl',
-                                 transform=transform, dim=args.num_y)
-        val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=4, pin_memory=True,
-                                persistent_workers=True)
+    if args.dataset.lower()[:5] == 'carla':
+        transform = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Resize((256, 256)),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        ])
+        train_dataset = NumpyDataset('/scratch/zz4330/Carla/Train/images.npy',
+                                     '/scratch/zz4330/Carla/Train/targets.npy', transform=transform)
+        val_dataset = NumpyDataset('/scratch/zz4330/Carla/Val/images.npy', '/scratch/zz4330/Carla/Val/targets.npy',
+                                   transform=transform)
+        train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=2, pin_memory=True, persistent_workers=True)
+        val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=2, pin_memory=True, persistent_workers=True)
+        print_memory_usage("Post-Dataset Loading GPU Memory Usage")
+
+
+        # train_dataset = SubDataset('/vast/lg154/Carla_JPG/Train/train_list.txt',
+        #                            '/vast/lg154/Carla_JPG/Train/sub_targets.pkl', transform=transform, dim=args.num_y)
+        # val_dataset = SubDataset('/vast/lg154/Carla_JPG/Val/val_list.txt', '/vast/lg154/Carla_JPG/Val/sub_targets.pkl',
+        #                          transform=transform, dim=args.num_y)
     elif args.dataset == 'mnist':
         transform = transforms.Compose([
             transforms.ToTensor(),
@@ -521,3 +537,27 @@ class MujocoAblate(Dataset):
             'input': self._to_tensor(states),
             'target': self._to_tensor(actions)
         }
+
+
+class NumpyDataset(Dataset):
+    def __init__(self, images_file, targets_file, transform=None):
+        self.images = np.load(images_file)
+        self.targets = np.load(targets_file)
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.images)
+
+    def __getitem__(self, idx):
+        image = self.images[idx]
+        targets = self.targets[idx,[0,10]] #steer and speed
+        #print(image.shape,targets.shape)
+        # Apply min-max normalization
+        #targets_min = np.min(targets)
+        #targets_max = np.max(targets)
+        #targets_normalized = (targets - targets_min) / (targets_max - targets_min)
+        if self.transform:
+            image = self.transform(image)
+
+        return torch.tensor(image, dtype=torch.float).permute(0, 2, 1), torch.tensor(targets, dtype=torch.float)  # Adjust for PyTorch: [C, H, W]
+

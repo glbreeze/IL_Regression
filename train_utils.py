@@ -135,8 +135,9 @@ def gram_schmidt(W):
 # ============== NC metrics ==============
 def compute_metrics(W, H, y_dim=None):
     result = {}
-    H_row_norms = torch.norm(H, dim=1, keepdim=True)
-    H_normalized = H / (H_row_norms + 1e-8)
+    # H_row_norms = torch.norm(H, dim=1, keepdim=True)
+    # H_normalized = H / (H_row_norms + 1e-8)
+    H_normalized = H / (torch.norm(H, dim=1, keepdim=True) + 1e-8)
 
     if y_dim == None:
         y_dim = W.shape[0]
@@ -154,7 +155,8 @@ def compute_metrics(W, H, y_dim=None):
     for k in range(max(y_dim, 6)):
         P_H = H_U[:k + 1, :].T @ H_U[:k + 1, :]
         result[f'nc1_pc{k + 1}'] = torch.sum((H @ P_H - H) ** 2).item() / len(H)
-        result[f'nc1n_pc{k + 1}'] = torch.mean(torch.norm(H_normalized @ P_H - H_normalized, p=2, dim=1) ** 2).item()
+        result[f'nc1n_pc{k + 1}'] = torch.norm(H_normalized @ P_H - H_normalized).item() ** 2 / len(H)
+        # result[f'nc1n_pc{k + 1}'] = torch.mean(torch.norm(H_normalized @ P_H - H_normalized, p=2, dim=1) ** 2).item()
         result[f'EVR{k + 1}'] = pca_for_H.explained_variance_ratio_[k]
 
     result['nc1'] = result[f'nc1_pc{y_dim}']
@@ -166,10 +168,11 @@ def compute_metrics(W, H, y_dim=None):
     try:
         inverse_mat = torch.inverse(W @ W.T)
     except Exception as e:
-        inverse_mat = torch.linalg.pinv(W @ W.T)
+        print(e)
     P_W = W.T @ inverse_mat @ W
     result['nc2'] = torch.sum((H - H @ P_W) ** 2).item() / len(H)
-    result['nc2n'] = torch.mean(torch.norm(H_normalized @ P_W - H_normalized, p=2, dim=1) ** 2).item()
+    result['nc2n'] = torch.norm(H_normalized @ P_W - H_normalized).item() ** 2 / len(H)
+    # result['nc2n'] = torch.mean(torch.norm(H_normalized @ P_W - H_normalized, p=2, dim=1) ** 2).item()
 
     # Projection error with Gram-Schmidt
     # U = gram_schmidt(W)
