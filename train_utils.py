@@ -52,14 +52,12 @@ def get_all_feat(model, loader, include_input=True):
     with torch.no_grad():
         for batch_id, (input, target) in enumerate(loader):
             input, target = input.to(device), target.to(device)
-            if input.ndim == 4:
-                if model.args.arch.startswith('mlp'):
-                    input = input.view(input.shape[0], -1)
-                else:
-                    input = torch.mean(input, dim=(2,3))
+            if input.ndim == 4 and model.args.arch.startswith('mlp'):
+                input = input.view(input.shape[0], -1)
 
             feat_list = model.forward_feat(input)
             if include_input:
+                if input.ndim == 4: input = torch.mean(input, dim=(2,3))
                 feat_list = [input] + feat_list
 
             if batch_id == 0:
@@ -89,12 +87,12 @@ def plot_var_ratio(vr_dt):
 def plot_var_ratio_hw(vr_dt, wr_dt):
     fig, axes = plt.subplots(nrows=1, ncols=2, figsize=(10, 6))
     cmap = plt.cm.viridis
-    norm = plt.Normalize(min(vr_dt.keys()), max(vr_dt.keys()))
+    norm = plt.Normalize(min(vr_dt.keys()), max(max(vr_dt.keys()), max(wr_dt.keys())) )
 
     for id, vr_ratio in vr_dt.items():
-        wr_ratio = wr_dt[id]
         axes[0].plot(np.arange(len(vr_ratio)), vr_ratio, color=cmap(norm(id)), label=f'layer{id}')
-        axes[1].plot(np.arange(len(wr_ratio)), wr_ratio, color=cmap(norm(id)), label=f'layer{id}')
+    for id, wr_ratio in wr_dt.items():
+        axes[1].plot(np.arange(len(wr_ratio)), wr_ratio, color=cmap(norm(id)), label=f'weight{id}')
     axes[0].legend()
     axes[1].legend()
     axes[0].set_title(r'Variance ratio of $X^T X$')
@@ -168,7 +166,7 @@ def compute_metrics(W, H, y_dim=None):
     try:
         inverse_mat = torch.inverse(W @ W.T)
     except Exception as e:
-        print(e)
+        inverse_mat = torch.linalg.pinv(W @ W.T)
     P_W = W.T @ inverse_mat @ W
     result['nc2'] = torch.sum((H - H @ P_W) ** 2).item() / len(H)
     result['nc2n'] = torch.mean(torch.norm(H_normalized @ P_W - H_normalized, p=2, dim=1) ** 2).item()

@@ -172,7 +172,10 @@ class VGG(nn.Module):
         layers = []
         for i in range(n_conv):
             conv2d = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1)
-            norm = nn.BatchNorm2d(out_channels)
+            if self.args.bn in ['p', 't']:
+                norm = nn.BatchNorm2d(out_channels)
+            else:
+                norm = nn.Identity()
             layers += [conv2d, norm, nn.ReLU(inplace=True)]
             in_channels = out_channels
         layers += [nn.MaxPool2d(kernel_size=2, stride=2)]
