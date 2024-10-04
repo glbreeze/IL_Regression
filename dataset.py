@@ -24,19 +24,22 @@ def get_dataloader(args):
             transforms.Resize((256, 256)),
             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
         ])
-        train_dataset = NumpyDataset('/scratch/zz4330/Carla/Train/images.npy',
-                                     '/scratch/zz4330/Carla/Train/targets.npy', transform=transform)
-        val_dataset = NumpyDataset('/scratch/zz4330/Carla/Val/images.npy', '/scratch/zz4330/Carla/Val/targets.npy',
-                                   transform=transform)
+        # train_dataset = NumpyDataset('/scratch/zz4330/Carla/Train/images.npy',
+        #                              '/scratch/zz4330/Carla/Train/targets.npy', transform=transform)
+        # val_dataset = NumpyDataset('/scratch/zz4330/Carla/Val/images.npy', '/scratch/zz4330/Carla/Val/targets.npy',
+        #                            transform=transform)
+        # train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=2, pin_memory=True, persistent_workers=True)
+        # val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=2, pin_memory=True, persistent_workers=True)
+        # print_memory_usage("Post-Dataset Loading GPU Memory Usage")
+
+
+        train_dataset = SubDataset('/vast/lg154/Carla_JPG/Train/train_list.txt',
+                                   '/vast/lg154/Carla_JPG/Train/sub_targets.pkl', transform=transform, dim=args.num_y)
+        val_dataset = SubDataset('/vast/lg154/Carla_JPG/Val/val_list.txt', 
+                                 '/vast/lg154/Carla_JPG/Val/sub_targets.pkl', transform=transform, dim=args.num_y)
         train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=2, pin_memory=True, persistent_workers=True)
         val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=2, pin_memory=True, persistent_workers=True)
         print_memory_usage("Post-Dataset Loading GPU Memory Usage")
-
-
-        # train_dataset = SubDataset('/vast/lg154/Carla_JPG/Train/train_list.txt',
-        #                            '/vast/lg154/Carla_JPG/Train/sub_targets.pkl', transform=transform, dim=args.num_y)
-        # val_dataset = SubDataset('/vast/lg154/Carla_JPG/Val/val_list.txt', '/vast/lg154/Carla_JPG/Val/sub_targets.pkl',
-        #                          transform=transform, dim=args.num_y)
     elif args.dataset == 'mnist':
         transform = transforms.Compose([
             transforms.ToTensor(),
