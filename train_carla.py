@@ -268,11 +268,11 @@ def main(args):
             log('--save model to {}'.format(ckpt_path))
 
         # =============== train model ==================
-        all_feats, train_loss = train_one_epoch(model, train_loader, optimizer, criterion, args=args)
         if epoch < args.warmup:
             warmup_scheduler.step()
         else:
             scheduler.step()
+        all_feats, train_loss = train_one_epoch(model, train_loader, optimizer, criterion, args=args)
         # =============== save w
         if args.save_w == 't' and (epoch + 1) % 100 == 0:
             import pickle
