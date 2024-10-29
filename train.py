@@ -1,24 +1,18 @@
 import os
-import pdb
 import torch
 import wandb
 import random
-import pickle
 from scipy.linalg import qr
 import argparse
 import numpy as np
 import torch.nn as nn
-from torch.utils.data import DataLoader
-from torch.nn.functional import mse_loss
 from torch.optim.lr_scheduler import LambdaLR
-import torch.nn.functional as F
-from sklearn.decomposition import PCA
 
-from dataset import SubDataset, get_dataloader
-from model import RegressionResNet, MLP, VGG, LeNet
-from train_utils import get_feat_pred, gram_schmidt, get_scheduler, get_theoretical_solution, compute_metrics, \
-    get_all_feat, plot_var_ratio_hw, plot_var_ratio
-from utils import print_model_param_nums, set_log_path, log, print_args, matrix_with_angle
+from dataset import get_dataloader
+from models.model import RegressionResNet, MLP, VGG, LeNet
+from train_utils import get_feat_pred, get_scheduler, get_theoretical_solution, compute_metrics, \
+    get_all_feat, plot_var_ratio_hw
+from utils import set_log_path, log, print_args, matrix_with_angle
 
 
 def train_one_epoch(model, data_loader, optimizer, criterion, args):
@@ -193,7 +187,8 @@ def main(args):
             WWT = (W @ W.T).cpu().numpy()
 
             # ===============compute train mse and projection error==================
-            all_feats, preds, labels = get_feat_pred(model, train_loader)
+            img_rs = True if args.arch.startswith('mlp') and args.dataset in ['mnist', 'cifar10'] else False
+            all_feats, preds, labels = get_feat_pred(model, train_loader, img_rs = img_rs)
             if args.dataset in ['mnist', 'cifar10']: labels = labels.float()
             torch.cuda.empty_cache()
             if args.y_norm not in ['null', 'n']:

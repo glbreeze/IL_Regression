@@ -21,7 +21,7 @@ def get_scheduler(args, optimizer):
         return optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.max_epoch)
 
 
-def get_feat_pred(model, loader):
+def get_feat_pred(model, loader, img_rs=False):
     model.eval()
     all_feats, all_preds, all_labels = [], [], []
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -132,7 +132,7 @@ def gram_schmidt(W):
     return U
 
 
-# ============== NC metrics ==============
+# ============== NC metrics for regression ==============
 def compute_metrics(W, H, y_dim=None):
     result = {}
     # H_row_norms = torch.norm(H, dim=1, keepdim=True)
@@ -221,32 +221,7 @@ def get_theoretical_solution(train_loader, args, all_labels=None, center=False):
     return theory_stat
 
 
-# ============ classification NC ============
-
-def compute_ETF(W, device):  # W [K, 512]
-    K = W.shape[0]
-    # W = W - torch.mean(W, dim=0, keepdim=True)
-    WWT = torch.mm(W, W.T)  # [K, 512] [512, K] -> [K, K]
-    WWT /= torch.norm(WWT, p='fro')  # [K, K]
-
-    sub = (torch.eye(K) - 1 / K * torch.ones((K, K))).to(device) / pow(K - 1, 0.5)
-    ETF_metric = torch.norm(WWT - sub, p='fro')
-    return ETF_metric.detach().cpu().numpy().item()
-
-
-def compute_W_H_relation(W, H, device):  # W:[K, 512] H:[512, K]
-    """ H is already normalized"""
-    K = W.shape[0]
-
-    # W = W - torch.mean(W, dim=0, keepdim=True)
-    WH = torch.mm(W, H.to(device))  # [K, 512] [512, K]
-    WH /= torch.norm(WH, p='fro')
-    sub = 1 / pow(K - 1, 0.5) * (torch.eye(K) - 1 / K * torch.ones((K, K))).to(device)
-
-    res = torch.norm(WH - sub, p='fro')
-    return res.detach().cpu().numpy().item()
-
-
+# ============== NC metrics for classification ==============
 def analysis_feat(labels, feats, num_classes, W=None):
     # analysis without extracting features
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -301,5 +276,28 @@ def analysis_feat(labels, feats, num_classes, W=None):
         'h_norm': h_norm,
         'w_norm': w_norm,
     }
-
     return nc_dt
+
+
+def compute_ETF(W, device):  # W [K, 512]
+    K = W.shape[0]
+    # W = W - torch.mean(W, dim=0, keepdim=True)
+    WWT = torch.mm(W, W.T)  # [K, 512] [512, K] -> [K, K]
+    WWT /= torch.norm(WWT, p='fro')  # [K, K]
+
+    sub = (torch.eye(K) - 1 / K * torch.ones((K, K))).to(device) / pow(K - 1, 0.5)
+    ETF_metric = torch.norm(WWT - sub, p='fro')
+    return ETF_metric.detach().cpu().numpy().item()
+
+
+def compute_W_H_relation(W, H, device):  # W:[K, 512] H:[512, K]
+    """ H is already normalized"""
+    K = W.shape[0]
+
+    # W = W - torch.mean(W, dim=0, keepdim=True)
+    WH = torch.mm(W, H.to(device))  # [K, 512] [512, K]
+    WH /= torch.norm(WH, p='fro')
+    sub = 1 / pow(K - 1, 0.5) * (torch.eye(K) - 1 / K * torch.ones((K, K))).to(device)
+
+    res = torch.norm(WH - sub, p='fro')
+    return res.detach().cpu().numpy().item()
