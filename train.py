@@ -319,7 +319,7 @@ def main(args):
                 return vr_by_layer, rk_by_layer
 
             include_input = False if args.dataset in ['mnist', 'cifar10', 'cifar100'] else True
-            feat_by_layer = get_all_feat(model, train_loader, include_input=include_input)
+            feat_by_layer = get_all_feat(model, train_loader, include_input=include_input, img_rs=img_rs)
 
             weight_by_layer = {id: model.backbone[id][0] for id in range(len(model.backbone))}
             for id in weight_by_layer.keys():

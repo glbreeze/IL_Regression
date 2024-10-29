@@ -126,4 +126,25 @@ class ViT(nn.Module):
         if ret_feat:
             return out, x
         else: 
-            return out 
+            return out
+
+    def forward_feat(self, img):
+        """only for inference, so I removed dropout"""
+        feat_list = []
+
+        # ====== patch embedding ======
+        x = self.to_patch_embedding(img)
+        b, n, _ = x.shape
+        cls_tokens = repeat(self.cls_token, '() n d -> b n d', b=b)
+        x = torch.cat((cls_tokens, x), dim=1)
+        feat_list.append(x)
+
+        x += self.pos_embedding[:, :(n + 1)]
+        x = self.dropout(x)
+        # ====== other features ======
+        for attn, ff in self.transformer.layers:
+            x = attn(x) + x
+            feat_list.append(x)
+            x = ff(x) + x
+            feat_list.append(x)
+        return feat_list

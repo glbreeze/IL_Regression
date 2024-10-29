@@ -26,7 +26,7 @@ from dataset import get_dataloader
 from trainer import train_one_epoch, evaluate
 
 from utils import *
-from train_utils import get_feat_pred, analysis_feat
+from train_utils import get_feat_pred, analysis_feat, get_all_feat
 
 
 def main(args):
@@ -135,6 +135,20 @@ def main(args):
                       'train_nc/w_norm': train_nc['w_norm'],
                       }
             wandb.log(log_dt, step=epoch)
+
+            weight_kqv = {id: model.transformer.layers[id][0].fn.to_qkv.weight for id in range(len(model.transformer.layers))}
+            weight_att_out = {id: model.transformer.layers[id][0].fn.to_out[0].weight for id in range(len(model.transformer.layers))}
+            weight_ffn = {id: model.transformer.layers[id][1].fn.net[0].weight for id in range(len(model.transformer.layers))}
+
+            _, rk_weight_kqv = get_rank(weight_kqv)
+            _, rk_weight_kqv = get_rank(weight_ffn)
+
+            feat_by_layer = get_all_feat(model, train_loader, include_input=False, img_rs=False)
+            _, rk_feat = get_rank(feat_by_layer)
+
+            wandb.log({f'feat_rank/{id}': rk for id, rk in rk_feat.items()}, step=epoch)
+            wandb.log({f'weight_kqv_rank/{id}': rk for id, rk in weight_kqv.items()}, step=epoch)
+            wandb.log({f'weight_ffn_rank/{id}': rk for id, rk in weight_ffn.items()}, step=epoch)
 
         # ===== save model
         if args.save_ckpt and val_acc > best_acc:

@@ -37,3 +37,20 @@ def matrix_with_angle(angle=np.pi/4, dim=256):
 
     vec2 = np.cos(angle) * vec1 + np.sin(angle) * orthogonal_vec
     return np.concatenate((vec1.reshape(1, -1), vec2.reshape(1, -1)), axis=0)
+
+
+def get_rank(m_by_layer):
+    vr_by_layer = {}
+    rk_by_layer = {}
+    for layer_id, m in m_by_layer.items():
+        cov = m.T @ m
+        U, S, Vt = np.linalg.svd(cov)
+        S = S[: min(m.shape[0], m.shape[1])]
+
+        s_ratio = S / np.sum(S)
+        entropy = -np.sum(s_ratio * np.log(s_ratio + 1e-12))
+        effective_rank = np.exp(entropy)
+
+        vr_by_layer[layer_id] = s_ratio
+        rk_by_layer[layer_id] = effective_rank
+    return vr_by_layer, rk_by_layer

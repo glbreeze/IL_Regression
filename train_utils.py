@@ -45,14 +45,14 @@ def get_feat_pred(model, loader, img_rs=False):
     return all_feats, all_preds, all_labels
 
 
-def get_all_feat(model, loader, include_input=True):
+def get_all_feat(model, loader, include_input=True, img_rs=False):
     model.eval()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     with torch.no_grad():
         for batch_id, (input, target) in enumerate(loader):
             input, target = input.to(device), target.to(device)
-            if input.ndim == 4 and model.args.arch.startswith('mlp'):
+            if img_rs:
                 input = input.view(input.shape[0], -1)
 
             feat_list = model.forward_feat(input)
