@@ -31,7 +31,7 @@ def get_feat_pred(model, loader, img_rs=False):
             input, target = input.to(device), target.to(device)
             if target.ndim == 1:
                 target = target.unsqueeze(1)
-            if input.ndim == 4 and model.args.arch.startswith('mlp'):
+            if img_rs:
                 input = input.view(input.shape[0], -1)
             pred, feat = model(input, ret_feat=True)
 

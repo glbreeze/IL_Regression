@@ -36,7 +36,7 @@ def main(args):
     os.environ["WANDB_CACHE_DIR"] = "./wandb"
     os.environ["WANDB_CONFIG_DIR"] = "./wandb"
     wandb.login(key='0c0abb4e8b5ce4ee1b1a4ef799edece5f15386ee')
-    wandb.init(project='nv' + args.dataset,
+    wandb.init(project='NRC_sep',
                name=args.exp_name
                )
     wandb.config.update(args)
@@ -103,8 +103,12 @@ def main(args):
     # ====================  Training utilities ====================
     criterion = nn.CrossEntropyLoss()
 
-    optimizer = torch.optim.SGD(model.parameters(), lr=args.lr)
-    lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[100,200,300], gamma=0.1),
+    optimizer = torch.optim.SGD(model.parameters(), momentum=0.9, lr=args.lr, weight_decay=args.weight_decay)
+    
+    if args.scheduler in ['ms', 'multi_step']:
+        lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[int(args.max_epochs*0.3), int(args.max_epochs*0.6)], gamma=0.1)
+    elif args.scheduler in ['cos', 'cosine']:
+        lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, args.max_epochs)
 
     wandb.watch(model, criterion, log='all', log_freq=100)
     for epoch in range(args.max_epochs):
@@ -116,6 +120,7 @@ def main(args):
             val_loss, val_acc = evaluate(model, criterion, test_loader)
 
             all_feats, preds, labels = get_feat_pred(model, train_loader)
+            labels = labels.squeeze()
             train_nc = analysis_feat(labels, all_feats, num_classes=args.num_classes, W=model.fc.weight.data)
 
             log_dt = {'val/val_loss': val_loss,
@@ -162,10 +167,12 @@ if __name__ == "__main__":
     parser.add_argument("--seed", type=int, default=2021, help="random seed")
     parser.add_argument('--dataset', type=str, default='cifar10')
     parser.add_argument('--model', default='vit')
-    parser.add_argument('--num_classes', default=10)
+    parser.add_argument('--num_classes', default=10, type=int)
+    parser.add_argument('--log_freq', default=5, type=int)
     parser.add_argument('--save_ckpt', default=False, action='store_true', help='save best model')
 
     parser.add_argument('--lr', default=0.01, type=float, help='learning rate')  # resnets.. 1e-3, Vit..1e-4
+    parser.add_argument('--weight_decay', default=0.001, type=float, help='weight decay')
     parser.add_argument('--resume', '-r', default=False, action='store_true', help='resume from checkpoint')
     parser.add_argument('--use_amp', default=False, action='store_true',
                         help='disable mixed precision training. for older pytorch versions')
@@ -187,10 +194,6 @@ if __name__ == "__main__":
     elif args.dataset == 'cifar100':
         args.img_size = 32
         args.num_classes = 100
-    if 'resnet' in args.model:
-        args.lr = 0.01
-    elif 'vit' in args.model:
-        args.lr = 0.001
 
     args.output_dir = os.path.join('./result/{}_{}/'.format(args.dataset, args.model), args.exp_name)
     if not os.path.exists(args.output_dir):
