@@ -33,12 +33,12 @@ def get_dataloader(args):
         # print_memory_usage("Post-Dataset Loading GPU Memory Usage")
 
 
-        train_dataset = SubDataset('/vast/lg154/Carla_JPG/Train/train_list.txt',
-                                   '/vast/lg154/Carla_JPG/Train/sub_targets.pkl', transform=transform, dim=args.num_y)
-        val_dataset = SubDataset('/vast/lg154/Carla_JPG/Val/val_list.txt', 
-                                 '/vast/lg154/Carla_JPG/Val/sub_targets.pkl', transform=transform, dim=args.num_y)
-        train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=4, pin_memory=True, persistent_workers=True)
-        val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=4, pin_memory=True, persistent_workers=True)
+        train_dataset = SubDataset('/vast/lg154/Carla_JPG/Train2/train_list.txt',
+                                   '/vast/lg154/Carla_JPG/Train2/sub_targets.pkl', transform=transform, dim=args.num_y)
+        val_dataset = SubDataset('/vast/lg154/Carla_JPG/Val2/val_list.txt', 
+                                 '/vast/lg154/Carla_JPG/Val2/sub_targets.pkl', transform=transform, dim=args.num_y)
+        train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=2, pin_memory=True, persistent_workers=True)
+        val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=2, pin_memory=True, persistent_workers=True)
         print_memory_usage("Post-Dataset Loading GPU Memory Usage")
     elif args.dataset == 'mnist':
         transform = transforms.Compose([
