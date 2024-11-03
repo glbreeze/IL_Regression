@@ -32,7 +32,7 @@ def simple_accuracy(preds, labels):
 
 def save_model(args, model):
     model_to_save = model.module if hasattr(model, 'module') else model
-    model_checkpoint = os.path.join(args.output_dir, "%s_checkpoint.bin" % args.name)
+    model_checkpoint = os.path.join(args.output_dir, "best_ckpt.pth")
     torch.save(model_to_save.state_dict(), model_checkpoint)
     logger.info("Saved model checkpoint to [DIR: %s]", args.output_dir)
 
@@ -91,9 +91,12 @@ def main(args):
 
 def setup(args):
     # Prepare model
-    config = CONFIGS[args.model_type]
-
+    config = CONFIGS[args.model]
     num_classes = 100 if args.dataset == "im100" else 1000
+    args.output_dir = os.path.join('./result/{}_{}/'.format(args.dataset, args.model), args.exp_name)
+    if args.local_rank in [-1, 0]:
+        if not os.path.exists(args.output_dir):
+            os.makedirs(args.output_dir)
 
     model = VisionTransformer(config, args.img_size, zero_head=True, num_classes=num_classes)
     model.load_from(np.load(args.pretrained_dir))
@@ -133,9 +136,9 @@ def train(args, model):
     #  ============ Train  ============
     logger.info("***** Running training *****")
     logger.info(f"  Total optimization steps = {args.num_steps}, Total number of epochs = {args.num_epochs}", )
-    logger.info("  Instantaneous batch size per GPU = %d", args.train_batch_size)
+    logger.info("  Instantaneous batch size per GPU = %d", args.batch_size)
     logger.info("  Total train batch size (w. parallel, distributed & accumulation) = %d",
-                args.train_batch_size * args.gradient_accumulation_steps * (
+                args.batch_size * args.gradient_accumulation_steps * (
                     torch.distributed.get_world_size() if args.local_rank != -1 else 1))
     logger.info("  Gradient Accumulation steps = %d", args.gradient_accumulation_steps)
 
@@ -145,7 +148,7 @@ def train(args, model):
     scaler = amp.GradScaler() if args.amp else None
     for epoch in range(args.num_epochs):
         model.train()
-        losses = AverageMeter()
+        losses = AverageMeter('train_loss')
         epoch_iterator = tqdm(train_loader, desc="Training (X / X Steps) (loss=X.X)", bar_format="{l_bar}{r_bar}",
                               dynamic_ncols=True, disable=args.local_rank not in [-1, 0])
 
@@ -202,11 +205,11 @@ def train(args, model):
 
 
 def valid(args, model, test_loader, global_step):
-    eval_losses = AverageMeter()
+    eval_losses = AverageMeter('val_loss')
 
     logger.info("***** Running Validation *****")
     logger.info("  Num steps = %d", len(test_loader))
-    logger.info("  Batch size = %d", args.eval_batch_size)
+    logger.info("  Batch size = %d", args.batch_size)
 
     model.eval()
     all_preds, all_label = [], []
@@ -253,10 +256,10 @@ def valid(args, model, test_loader, global_step):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     # Required parameters
-    parser.add_argument("--name", default='exp', help="Name of this run. Used for monitoring.")
+    parser.add_argument("--exp_name", default='exp', help="Name of this run. Used for monitoring.")
     parser.add_argument("--dataset", choices=["cifar10", "cifar100", "imagenet", "im100"], default="cifar10",
                         help="Which downstream task.")
-    parser.add_argument("--model_type",
+    parser.add_argument("--model",
                         choices=["ViT-B_16", "ViT-B_32", "ViT-L_16", "ViT-L_32", "ViT-H_14", "R50-ViT-B_16"],
                         default="ViT-B_16", help="Which variant to use.")
     parser.add_argument("--pretrained_dir", type=str, default="models/pretrain/ViT-B_16.npz",
