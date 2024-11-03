@@ -5,11 +5,13 @@ Train CIFAR10 with PyTorch and Vision Transformers!
 written by @kentaroy47, @arutema47
 
 '''
-
 from __future__ import print_function
 
+import gc
 import random
 import argparse
+import numpy as np
+import torch.backends.cudnn as cudnn
 
 import wandb
 import timm
@@ -28,7 +30,6 @@ from train_utils import get_feat_pred, analysis_feat, get_all_feat
 
 
 def main(args):
-
     os.environ["WANDB_API_KEY"] = "0c0abb4e8b5ce4ee1b1a4ef799edece5f15386ee"
     os.environ["WANDB_MODE"] = "online"  # "dryrun"
     os.environ["WANDB_CACHE_DIR"] = "./wandb"
@@ -102,9 +103,11 @@ def main(args):
     criterion = nn.CrossEntropyLoss()
 
     optimizer = torch.optim.SGD(model.parameters(), momentum=0.9, lr=args.lr, weight_decay=args.weight_decay)
-    
+
     if args.scheduler in ['ms', 'multi_step']:
-        lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[int(args.max_epochs*0.3), int(args.max_epochs*0.6)], gamma=0.1)
+        lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[int(args.max_epochs * 0.3),
+                                                                                   int(args.max_epochs * 0.6)],
+                                                            gamma=0.1)
     elif args.scheduler in ['cos', 'cosine']:
         lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, args.max_epochs)
 
@@ -112,9 +115,11 @@ def main(args):
     for epoch in range(args.max_epochs):
         train_loss, train_acc = train_one_epoch(model, criterion, optimizer, train_loader, args)
         lr_scheduler.step()
-        wandb.log({'train/train_loss': train_loss, 'train/train_acc': train_acc, 'train/lr': optimizer.param_groups[0]["lr"]}, step=epoch)
+        wandb.log(
+            {'train/train_loss': train_loss, 'train/train_acc': train_acc, 'train/lr': optimizer.param_groups[0]["lr"]},
+            step=epoch)
 
-        if epoch == 0 or epoch % args.log_freq == 0 or epoch+1==args.max_epochs:
+        if epoch == 0 or epoch % args.log_freq == 0 or epoch + 1 == args.max_epochs:
             val_loss, val_acc = evaluate(model, criterion, test_loader)
 
             all_feats, preds, labels = get_feat_pred(model, train_loader)
@@ -134,19 +139,46 @@ def main(args):
                       }
             wandb.log(log_dt, step=epoch)
 
-            weight_kqv = {id: model.transformer.layers[id][0].fn.to_qkv.weight for id in range(len(model.transformer.layers))}
-            weight_att_out = {id: model.transformer.layers[id][0].fn.to_out[0].weight for id in range(len(model.transformer.layers))}
-            weight_ffn = {id: model.transformer.layers[id][1].fn.net[0].weight for id in range(len(model.transformer.layers))}
-
+            weight_kqv = {id: model.transformer.layers[id][0].fn.to_qkv.weight.data.cpu().numpy() for id in
+                          range(len(model.transformer.layers))}
             _, rk_weight_kqv = get_rank(weight_kqv)
-            _, rk_weight_kqv = get_rank(weight_ffn)
+            wandb.log({f'weight_kqv_rank/{id}': rk for id, rk in rk_weight_kqv.items()}, step=epoch)
+            del weight_kqv
 
-            feat_by_layer = get_all_feat(model, train_loader, include_input=False, img_rs=False)
-            _, rk_feat = get_rank(feat_by_layer)
+            # weight_att_out = {id: model.transformer.layers[id][0].fn.to_out[0].weight.data.cpu().numpy() for id in range(len(model.transformer.layers))}
+            weight_ffn = {id: model.transformer.layers[id][1].fn.net[0].weight.data.cpu().numpy() for id in
+                          range(len(model.transformer.layers))}
+            _, rk_weight_ffn = get_rank(weight_ffn)
+            wandb.log({f'weight_ffn_rank/{id}': rk for id, rk in rk_weight_ffn.items()}, step=epoch)
+            del weight_ffn
+            gc.collect()
+            torch.cuda.empty_cache()
 
-            wandb.log({f'feat_rank/{id}': rk for id, rk in rk_feat.items()}, step=epoch)
-            wandb.log({f'weight_kqv_rank/{id}': rk for id, rk in weight_kqv.items()}, step=epoch)
-            wandb.log({f'weight_ffn_rank/{id}': rk for id, rk in weight_ffn.items()}, step=epoch)
+            # ======== rank of the features ========
+            model.eval()
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            with torch.no_grad():
+                for batch_id, (input, target) in enumerate(train_loader):
+                    if batch_id >= 10: break
+                    input, target = input.to(device), target.to(device)
+                    feat_list = model.forward_feat(input)
+
+                    if batch_id == 0:
+                        feat_rk = {layer_id: AverageMeter('Loss', ':.4e') for layer_id in range(len(feat_list))}
+
+                    for layer_id, feat in enumerate(feat_list):
+                        feat = feat.view(-1, feat.shape[-1]).cpu().numpy()  # [BL, C]
+                        cov = feat.T @ feat  # [C, C]
+                        U, S, Vt = np.linalg.svd(cov)
+                        S = S[: min(feat.shape[0], feat.shape[1])]
+
+                        s_ratio = S / np.sum(S)
+                        entropy = -np.sum(s_ratio * np.log(s_ratio + 1e-12))
+                        effective_rank = np.exp(entropy)
+
+                        feat_rk[layer_id].update(effective_rank, 1)
+
+            wandb.log({f'feat_rank/{id}': rk.avg for id, rk in feat_rk.items()}, step=epoch)
 
         # ===== save model
         if args.save_ckpt and val_acc > best_acc:

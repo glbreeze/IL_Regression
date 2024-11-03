@@ -26,12 +26,13 @@ def get_dataloader(args):
         ])
         train_dataset = SubDataset('/vast/lg154/Carla_JPG/Train2/train_list.txt',
                                    '/vast/lg154/Carla_JPG/Train2/sub_targets.pkl', transform=transform, dim=args.num_y)
-        val_dataset = SubDataset('/vast/lg154/Carla_JPG/Val2/val_list.txt', 
+        val_dataset = SubDataset('/vast/lg154/Carla_JPG/Val2/val_list.txt',
                                  '/vast/lg154/Carla_JPG/Val2/sub_targets.pkl', transform=transform, dim=args.num_y)
-        train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=2, pin_memory=True, persistent_workers=True)
-        val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=2, pin_memory=True, persistent_workers=True)
+        train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=2,
+                                  pin_memory=True, persistent_workers=True)
+        val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=2, pin_memory=True,
+                                persistent_workers=True)
         print_memory_usage("Post-Dataset Loading GPU Memory Usage")
-
     elif args.dataset == 'mnist':
         transform = transforms.Compose([
             transforms.ToTensor(),
@@ -69,22 +70,28 @@ def get_dataloader(args):
                                                    num_workers=args.num_workers, pin_memory=True, drop_last=True)
 
         test_loader = torch.utils.data.DataLoader(testset, batch_size=args.batch_size, shuffle=False,
-                                                  num_workers=args.num_workers, persistent_workers=True, pin_memory=True)
+                                                  num_workers=args.num_workers, persistent_workers=True,
+                                                  pin_memory=True)
 
     # cifar10/cifar100: 32x32, stl10: 96x96, fmnist: 28x28, TinyImageNet 64x64
     elif args.dataset == 'cifar10':
+
         transform = transforms.Compose([
-            transforms.Resize(args.img_size),
+            transforms.RandomCrop(32, padding=4),
+            transforms.RandomHorizontalFlip(),
             transforms.ToTensor(),
-            transforms.Normalize(mean=[0.4914, 0.4822, 0.4465], std=[0.2470, 0.2434, 0.2615])
+            transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
         ])
-        test_tranform = transform
+        test_transform = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+        ])
         train_loader = torch.utils.data.DataLoader(
             datasets.CIFAR10(root='../dataset', train=True, download=True, transform=transform),
             batch_size=args.batch_size, shuffle=True
         )
         val_loader = torch.utils.data.DataLoader(
-            datasets.CIFAR10(root='../dataset', train=False, download=True, transform=test_tranform),
+            datasets.CIFAR10(root='../dataset', train=False, download=True, transform=test_transform),
             batch_size=args.batch_size, shuffle=False
         )
 
@@ -307,7 +314,7 @@ class MujocoBuffer(Dataset):
                     self.size = int(dataset['observations'].shape[0] * data_ratio)
                 else:
                     self.size = int(data_ratio) if data_ratio <= dataset['observations'].shape[0] else \
-                    dataset['observations'].shape[0]
+                        dataset['observations'].shape[0]
                 self.states = dataset['observations'][:self.size, :]
                 self.actions = dataset['actions'][:self.size, :]
             print('Successfully load dataset from: ', file_path)
@@ -398,14 +405,15 @@ class NumpyDataset(Dataset):
 
     def __getitem__(self, idx):
         image = self.images[idx]
-        targets = self.targets[idx,[0,10]] #steer and speed
-        #print(image.shape,targets.shape)
+        targets = self.targets[idx, [0, 10]]  # steer and speed
+        # print(image.shape,targets.shape)
         # Apply min-max normalization
-        #targets_min = np.min(targets)
-        #targets_max = np.max(targets)
-        #targets_normalized = (targets - targets_min) / (targets_max - targets_min)
+        # targets_min = np.min(targets)
+        # targets_max = np.max(targets)
+        # targets_normalized = (targets - targets_min) / (targets_max - targets_min)
         if self.transform:
             image = self.transform(image)
 
-        return torch.tensor(image, dtype=torch.float).permute(0, 2, 1), torch.tensor(targets, dtype=torch.float)  # Adjust for PyTorch: [C, H, W]
+        return torch.tensor(image, dtype=torch.float).permute(0, 2, 1), torch.tensor(targets,
+                                                                                     dtype=torch.float)  # Adjust for PyTorch: [C, H, W]
 
