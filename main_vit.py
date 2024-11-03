@@ -15,8 +15,8 @@ import torch.distributed as dist
 
 from tqdm import tqdm
 from torch.utils.tensorboard import SummaryWriter
-from apex import amp
-from apex.parallel import DistributedDataParallel as DDP
+import torch.cuda.amp as amp
+from torch.nn.parallel import DistributedDataParallel as DDP
 
 from models.modeling import VisionTransformer, CONFIGS
 from utils.sheduler import WarmupLinearSchedule, WarmupCosineSchedule
@@ -67,7 +67,7 @@ def main(args):
     logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s - %(message)s', datefmt='%m/%d/%Y %H:%M:%S',
                         level=logging.INFO if args.local_rank in [-1, 0] else logging.WARN)
     logger.warning("Process rank: %s, device: %s, n_gpu: %s, distributed training: %s, 16-bits training: %s" %
-                   (args.local_rank, args.device, args.n_gpu, bool(args.local_rank != -1), args.fp16))
+                   (args.local_rank, args.device, args.n_gpu, bool(args.local_rank != -1), args.amp))
 
     # Set seed
     set_seed(args)
@@ -113,7 +113,7 @@ def train(args, model):
 
     # ============ Prepare dataset  ============
     train_loader, test_loader = get_dataloader(args)
-    args.num_steps = len(train_loader) * args.num_epochs
+    args.num_steps = len(train_loader) * args.num_epochs / args.gradient_accumulation_steps
 
     #  ============ Prepare optimizer and scheduler  ============
     optimizer = torch.optim.SGD(model.parameters(),
@@ -125,12 +125,6 @@ def train(args, model):
         scheduler = WarmupCosineSchedule(optimizer, warmup_steps=args.warmup_steps, t_total=args.num_steps)
     else:
         scheduler = WarmupLinearSchedule(optimizer, warmup_steps=args.warmup_steps, t_total=args.num_steps)
-
-    if args.fp16:
-        model, optimizer = amp.initialize(models=model,
-                                          optimizers=optimizer,
-                                          opt_level=args.fp16_opt_level)
-        amp._amp_state.loss_scalers[0]._loss_scale = 2**20
 
     # Distributed training
     if args.local_rank != -1:
@@ -147,67 +141,67 @@ def train(args, model):
 
     model.zero_grad()
     set_seed(args)  # Added here for reproducibility (even between python 2 and 3)
-    losses = AverageMeter()
     global_step, best_acc = 0, 0
+    scaler = amp.GradScaler() if args.amp else None
     for epoch in range(args.num_epochs):
         model.train()
-        epoch_iterator = tqdm(train_loader,
-                              desc="Training (X / X Steps) (loss=X.X)",
-                              bar_format="{l_bar}{r_bar}",
-                              dynamic_ncols=True,
-                              disable=args.local_rank not in [-1, 0])
-        for step, batch in enumerate(epoch_iterator):
-            batch = tuple(t.to(args.device) for t in batch)
-            x, y = batch
-            loss = model(x, y)
+        losses = AverageMeter()
+        epoch_iterator = tqdm(train_loader, desc="Training (X / X Steps) (loss=X.X)", bar_format="{l_bar}{r_bar}",
+                              dynamic_ncols=True, disable=args.local_rank not in [-1, 0])
 
-            if args.gradient_accumulation_steps > 1:
-                loss = loss / args.gradient_accumulation_steps
-            if args.fp16:
-                with amp.scale_loss(loss, optimizer) as scaled_loss:
-                    scaled_loss.backward()
-            else:
-                loss.backward()
+        for step, (x, y) in enumerate(epoch_iterator):
+            x, y = x.to(args.device), y.to(args.device)
+            with amp.autocast(dtype=torch.float16, enabled=args.amp):
+                loss = model(x, y)
+                losses.update(loss.item())
+                if args.gradient_accumulation_steps > 1:
+                    loss = loss / args.gradient_accumulation_steps
+
+                if args.amp:
+                    # Accumulates scaled gradients.
+                    scaler.scale(loss).backward()
+
+                    if (step + 1) % args.gradient_accumulation_steps == 0:
+                        # may unscale_ here if desired (e.g., to allow clipping unscaled gradients)
+                        scaler.unscale_(optimizer)
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
+
+                        scaler.step(optimizer)
+                        scaler.update()
+                        optimizer.zero_grad()
+                else:
+                    loss.backward()
+                    if (step + 1) % args.gradient_accumulation_steps == 0:
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
+                        optimizer.step()
+                        optimizer.zero_grad()
 
             if (step + 1) % args.gradient_accumulation_steps == 0:
-                losses.update(loss.item()*args.gradient_accumulation_steps)
-                if args.fp16:
-                    torch.nn.utils.clip_grad_norm_(amp.master_params(optimizer), args.max_grad_norm)
-                else:
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
                 scheduler.step()
-                optimizer.step()
-                optimizer.zero_grad()
                 global_step += 1
-
                 epoch_iterator.set_description(
                     "Training (%d / %d Steps) (loss=%2.5f)" % (global_step, args.num_steps, losses.val)
                 )
-                if args.local_rank in [-1, 0]:
-                    writer.add_scalar("train/loss", scalar_value=losses.val, global_step=global_step)
-                    writer.add_scalar("train/lr", scalar_value=scheduler.get_lr()[0], global_step=global_step)
+                if args.local_rank in [-1, 0] and global_step%5 == 0:
+                    wandb.log({"train/loss": losses.val,
+                               "train/lr": scheduler.get_lr()[0]
+                               }, step=global_step)
                 if global_step % args.eval_every == 0 and args.local_rank in [-1, 0]:
-                    accuracy = valid(args, model, writer, test_loader, global_step)
+                    accuracy = valid(args, model, test_loader, global_step)
+                    wandb.log({"val/acc": accuracy}, step=global_step)
                     if best_acc < accuracy:
                         save_model(args, model)
                         best_acc = accuracy
                     model.train()
 
-                if global_step % t_total == 0:
-                    break
         losses.reset()
-        if global_step % t_total == 0:
-            break
 
-    if args.local_rank in [-1, 0]:
-        writer.close()
     logger.info("Best Accuracy: \t%f" % best_acc)
     logger.info("End Training!")
 
 
 
-def valid(args, model, writer, test_loader, global_step):
-    # Validation!
+def valid(args, model, test_loader, global_step):
     eval_losses = AverageMeter()
 
     logger.info("***** Running Validation *****")
@@ -222,9 +216,8 @@ def valid(args, model, writer, test_loader, global_step):
                           dynamic_ncols=True,
                           disable=args.local_rank not in [-1, 0])
     loss_fct = torch.nn.CrossEntropyLoss()
-    for step, batch in enumerate(epoch_iterator):
-        batch = tuple(t.to(args.device) for t in batch)
-        x, y = batch
+    for step, (x, y) in enumerate(epoch_iterator):
+        x, y = x.to(args.device), y.to(args.device)
         with torch.no_grad():
             logits = model(x)[0]
 
@@ -254,7 +247,6 @@ def valid(args, model, writer, test_loader, global_step):
     logger.info("Valid Loss: %2.5f" % eval_losses.avg)
     logger.info("Valid Accuracy: %2.5f" % accuracy)
 
-    writer.add_scalar("test/accuracy", scalar_value=accuracy, global_step=global_step)
     return accuracy
 
 
@@ -292,13 +284,6 @@ if __name__ == "__main__":
     parser.add_argument('--seed', type=int, default=42, help="random seed for initialization")
     parser.add_argument('--gradient_accumulation_steps', type=int, default=1,
                         help="Number of updates steps to accumulate before performing a backward/update pass.")
-    parser.add_argument('--fp16', action='store_true', help="Whether to use 16-bit float precision instead of 32-bit")
-    parser.add_argument('--fp16_opt_level', type=str, default='O2',
-                        help="For fp16: Apex AMP optimization level selected in ['O0', 'O1', 'O2', and 'O3']."
-                             "See details at https://nvidia.github.io/apex/amp.html")
-    parser.add_argument('--loss_scale', type=float, default=0,
-                        help="Loss scaling to improve fp16 numeric stability. Only used when fp16 set to True.\n"
-                             "0 (default value): dynamic loss scaling.\n"
-                             "Positive power of 2: static loss scaling value.\n")
+    parser.add_argument('--amp', action='store_true', help="Whether to use 16-bit float precision instead of 32-bit")
     args = parser.parse_args()
     main(args)
