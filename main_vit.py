@@ -133,6 +133,10 @@ def train(args, model):
     if args.local_rank != -1:
         model = DDP(model, message_size=250000000, gradient_predivide_factor=get_world_size())
 
+    # ============= Train cls =============
+    if args.cls_epochs>0:
+        train_cls(args, model, train_loader, test_loader)
+
     #  ============ Train  ============
     logger.info("***** Running training *****")
     logger.info(f"  Total optimization steps = {args.num_steps}, Total number of epochs = {args.num_epochs}", )
@@ -161,7 +165,6 @@ def train(args, model):
                     loss = loss / args.gradient_accumulation_steps
 
                 if args.amp:
-                    # Accumulates scaled gradients.
                     scaler.scale(loss).backward()
 
                     if (step + 1) % args.gradient_accumulation_steps == 0:
@@ -190,7 +193,7 @@ def train(args, model):
                                "train/lr": scheduler.get_lr()[0]
                                }, step=global_step)
                 if global_step % args.eval_every == 0 and args.local_rank in [-1, 0]:
-                    accuracy = valid(args, model, test_loader, global_step)
+                    accuracy = valid(args, model, test_loader)
                     wandb.log({"val/acc": accuracy}, step=global_step)
                     if best_acc < accuracy:
                         save_model(args, model)
@@ -203,8 +206,39 @@ def train(args, model):
     logger.info("End Training!")
 
 
+def train_cls(args, model, train_loader, test_loader):
+    model.zero_grad()
+    model.head.train()
+    set_seed(args)  # Added here for reproducibility (even between python 2 and 3)
+    cls_optimizer = torch.optim.SGD(model.head.parameters(), lr=args.cls_lr, momentum=0.9, weight_decay=args.weight_decay)
 
-def valid(args, model, test_loader, global_step):
+    for epoch in range(args.cls_epochs):
+        model.transformer.eval()
+        model.head.train()
+        losses = AverageMeter('train_cls_loss')
+
+        for step, (x, y) in enumerate(train_loader):
+            x, y = x.to(args.device), y.to(args.device)
+            loss = model(x, y)
+            losses.update(loss.item())
+            if args.gradient_accumulation_steps > 1:
+                loss = loss / args.gradient_accumulation_steps
+
+            loss.backward()
+            if (step + 1) % args.gradient_accumulation_steps == 0:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
+                cls_optimizer.step()
+                cls_optimizer.zero_grad()
+
+                prog = (epoch * len(train_loader) + step) / (args.cls_epochs * len(train_loader))
+                cls_optimizer.param_groups[0]['lr'] = args.cls_lr * 0.2 ** (prog // 0.333)
+        print(f'Train Classifier EP{epoch}/{args.cls_epochs} Train loss:{losses.avg:.3f}, LR:{cls_optimizer.param_groups[0]["lr"]:.5f}')
+
+        test_acc = valid(args, model, test_loader)
+        print(f'Train Classifier EP{epoch}/{args.cls_epochs} Test Acc:{test_acc:.3f}')
+
+
+def valid(args, model, test_loader):
     eval_losses = AverageMeter('val_loss')
 
     logger.info("***** Running Validation *****")
@@ -246,7 +280,6 @@ def valid(args, model, test_loader, global_step):
 
     logger.info("\n")
     logger.info("Validation Results")
-    logger.info("Global Steps: %d" % global_step)
     logger.info("Valid Loss: %2.5f" % eval_losses.avg)
     logger.info("Valid Accuracy: %2.5f" % accuracy)
 
@@ -277,11 +310,12 @@ if __name__ == "__main__":
     parser.add_argument("--lr", default=3e-2, type=float, help="The initial learning rate for SGD.")
     parser.add_argument("--weight_decay", default=0, type=float, help="Weight decay if we apply some.")
     parser.add_argument("--num_epochs", default=100, type=int, help="Total number of training epochs to perform.")
-    parser.add_argument("--scheduler", choices=["cosine", "linear"], default="cosine",
-                        help="How to decay the learning rate.")
-    parser.add_argument("--warmup_steps", default=500, type=int,
-                        help="Step of training to perform learning rate warmup for.")
+    parser.add_argument("--scheduler", choices=["cosine", "linear"], default="cosine", help="How to decay the learning rate.")
+    parser.add_argument("--warmup_steps", default=500, type=int, help="Step of training to perform learning rate warmup for.")
     parser.add_argument("--max_grad_norm", default=1.0, type=float, help="Max gradient norm.")
+
+    parser.add_argument("--cls_epochs", default=0, type=int, help="Total number of epochs to retrain cls layer.")
+    parser.add_argument("--cls_lr", default=1e-3, type=float, help="LR for training cls.")
 
     parser.add_argument("--local_rank", type=int, default=-1, help="local_rank for distributed training on gpus")
     parser.add_argument('--seed', type=int, default=42, help="random seed for initialization")
