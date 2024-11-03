@@ -117,11 +117,11 @@ def train(args, model):
 
     #  ============ Prepare optimizer and scheduler  ============
     optimizer = torch.optim.SGD(model.parameters(),
-                                lr=args.learning_rate,
+                                lr=args.lr,
                                 momentum=0.9,
                                 weight_decay=args.weight_decay)
 
-    if args.decay_type == "cosine":
+    if args.scheduler == "cosine":
         scheduler = WarmupCosineSchedule(optimizer, warmup_steps=args.warmup_steps, t_total=args.num_steps)
     else:
         scheduler = WarmupLinearSchedule(optimizer, warmup_steps=args.warmup_steps, t_total=args.num_steps)
@@ -267,7 +267,7 @@ if __name__ == "__main__":
     parser.add_argument("--model_type",
                         choices=["ViT-B_16", "ViT-B_32", "ViT-L_16", "ViT-L_32", "ViT-H_14", "R50-ViT-B_16"],
                         default="ViT-B_16", help="Which variant to use.")
-    parser.add_argument("--pretrained_dir", type=str, default="checkpoint/ViT-B_16.npz",
+    parser.add_argument("--pretrained_dir", type=str, default="models/pretrain/ViT-B_16.npz",
                         help="Where to search for pretrained ViT models.")
     parser.add_argument("--output_dir", default="output", type=str,
                         help="The output directory where checkpoints will be written.")
@@ -279,10 +279,10 @@ if __name__ == "__main__":
                         help="Run prediction on validation set every so many steps."
                              "Will always run one evaluation at the end of training.")
 
-    parser.add_argument("--learning_rate", default=3e-2, type=float, help="The initial learning rate for SGD.")
+    parser.add_argument("--lr", default=3e-2, type=float, help="The initial learning rate for SGD.")
     parser.add_argument("--weight_decay", default=0, type=float, help="Weight decay if we apply some.")
     parser.add_argument("--num_epochs", default=100, type=int, help="Total number of training epochs to perform.")
-    parser.add_argument("--decay_type", choices=["cosine", "linear"], default="cosine",
+    parser.add_argument("--scheduler", choices=["cosine", "linear"], default="cosine",
                         help="How to decay the learning rate.")
     parser.add_argument("--warmup_steps", default=500, type=int,
                         help="Step of training to perform learning rate warmup for.")
