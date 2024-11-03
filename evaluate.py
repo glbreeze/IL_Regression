@@ -1,25 +1,19 @@
 import os
-import h5py
 import torch
 import random
-from torch.utils.data import Dataset, DataLoader
-from torchvision.transforms import Compose, ToTensor, Normalize
 import numpy as np
 import torch.nn as nn
-from torchvision import models, transforms
 from torch.utils.data import DataLoader
 from sklearn.decomposition import PCA
 from scipy.spatial.distance import pdist, squareform
 from tqdm import tqdm
-from torch.profiler import profile, record_function, ProfilerActivity
 import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D
 import torch.nn.functional as F
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.preprocessing import MinMaxScaler
 from torch.nn.functional import mse_loss
 from dataset import NumpyDataset, transform  
-from model import RegressionResNet 
+from models.model import RegressionResNet
 
         
 def main():

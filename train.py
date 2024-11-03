@@ -12,7 +12,7 @@ from dataset import get_dataloader
 from models.model import RegressionResNet, MLP, VGG, LeNet
 from train_utils import get_feat_pred, get_scheduler, get_theoretical_solution, compute_metrics, \
     get_all_feat, plot_var_ratio_hw
-from utils import set_log_path, log, print_args, matrix_with_angle
+from utils.utils import set_log_path, log, print_args, matrix_with_angle
 
 
 def train_one_epoch(model, data_loader, optimizer, criterion, args):

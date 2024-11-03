@@ -1,221 +1,304 @@
-# -*- coding: utf-8 -*-
-'''
+# coding=utf-8
+from __future__ import absolute_import, division, print_function
 
-Train CIFAR10 with PyTorch and Vision Transformers!
-written by @kentaroy47, @arutema47
-
-'''
-
-from __future__ import print_function
-
-import random
+import logging
 import argparse
-import numpy as np
-import torch.backends.cudnn as cudnn
-
+import os
 import wandb
-import timm
-from models import *
-from models.mlpmixer import MLPMixer
-from models.convmixer import ConvMixer
-from models.simplevit import SimpleViT
-from models.vit import ViT
-from models.vit_small import ViT as Small_ViT
+import random
+import numpy as np
 
+from datetime import timedelta
+
+import torch
+import torch.distributed as dist
+
+from tqdm import tqdm
+from torch.utils.tensorboard import SummaryWriter
+from apex import amp
+from apex.parallel import DistributedDataParallel as DDP
+
+from models.modeling import VisionTransformer, CONFIGS
+from utils.sheduler import WarmupLinearSchedule, WarmupCosineSchedule
+from utils.disc_utils import get_world_size
+from utils.utils import AverageMeter
 from dataset import get_dataloader
-from trainer import train_one_epoch, evaluate
 
-from utils import *
-from train_utils import get_feat_pred, analysis_feat, get_all_feat
+logger = logging.getLogger(__name__)
+
+def simple_accuracy(preds, labels):
+    return (preds == labels).mean()
+
+
+def save_model(args, model):
+    model_to_save = model.module if hasattr(model, 'module') else model
+    model_checkpoint = os.path.join(args.output_dir, "%s_checkpoint.bin" % args.name)
+    torch.save(model_to_save.state_dict(), model_checkpoint)
+    logger.info("Saved model checkpoint to [DIR: %s]", args.output_dir)
+
+
+def count_parameters(model):
+    params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    return params/1000000
+
+
+def set_seed(args):
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    if args.n_gpu > 0:
+        torch.cuda.manual_seed_all(args.seed)
 
 
 def main(args):
+    # Setup CUDA, GPU & distributed training
+    if args.local_rank == -1:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        args.n_gpu = torch.cuda.device_count()
+    else:  # Initializes the distributed backend which will take care of sychronizing nodes/GPUs
+        torch.cuda.set_device(args.local_rank)
+        device = torch.device("cuda", args.local_rank)
+        torch.distributed.init_process_group(backend='nccl',
+                                             timeout=timedelta(minutes=60))
+        args.n_gpu = 1
+    args.device = device
 
-    os.environ["WANDB_API_KEY"] = "0c0abb4e8b5ce4ee1b1a4ef799edece5f15386ee"
-    os.environ["WANDB_MODE"] = "online"  # "dryrun"
-    os.environ["WANDB_CACHE_DIR"] = "./wandb"
-    os.environ["WANDB_CONFIG_DIR"] = "./wandb"
-    wandb.login(key='0c0abb4e8b5ce4ee1b1a4ef799edece5f15386ee')
-    wandb.init(project='NRC_sep',
-               name=args.exp_name
-               )
-    wandb.config.update(args)
+    # Setup logging
+    logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s - %(message)s', datefmt='%m/%d/%Y %H:%M:%S',
+                        level=logging.INFO if args.local_rank in [-1, 0] else logging.WARN)
+    logger.warning("Process rank: %s, device: %s, n_gpu: %s, distributed training: %s, 16-bits training: %s" %
+                   (args.local_rank, args.device, args.n_gpu, bool(args.local_rank != -1), args.fp16))
 
-    global best_acc
-    best_acc = 0  # best test accuracy
-    start_epoch = 0  # start from epoch 0 or last checkpoint epoch
+    # Set seed
+    set_seed(args)
 
-    # ==================== data loader ====================
-    print('==> Preparing data..')
+    # setup wandb
+    if args.local_rank in [-1, 0]:
+        os.environ["WANDB_API_KEY"] = "0c0abb4e8b5ce4ee1b1a4ef799edece5f15386ee"
+        os.environ["WANDB_MODE"] = "online"  # "dryrun"
+        os.environ["WANDB_CACHE_DIR"] = "./wandb"
+        os.environ["WANDB_CONFIG_DIR"] = "./wandb"
+        wandb.login(key='0c0abb4e8b5ce4ee1b1a4ef799edece5f15386ee')
+        wandb.init(project='NRC_sep', name=args.exp_name)
+        wandb.config.update(args)
+
+    # Model & Tokenizer Setup
+    args, model = setup(args)
+
+    # Training
+    train(args, model)
+
+
+def setup(args):
+    # Prepare model
+    config = CONFIGS[args.model_type]
+
+    num_classes = 100 if args.dataset == "im100" else 1000
+
+    model = VisionTransformer(config, args.img_size, zero_head=True, num_classes=num_classes)
+    model.load_from(np.load(args.pretrained_dir))
+    model.to(args.device)
+    num_params = count_parameters(model)
+
+    logger.info("{}".format(config))
+    logger.info("Training parameters %s", args)
+    logger.info("Total Parameter: \t%2.1fM" % num_params)
+    print(num_params)
+    return args, model
+
+
+def train(args, model):
+    """ Train the model """
+    args.batch_size = args.batch_size // args.gradient_accumulation_steps
+
+    # ============ Prepare dataset  ============
     train_loader, test_loader = get_dataloader(args)
+    args.num_steps = len(train_loader) * args.num_epochs
 
-    # ====================  define model ====================
-    # Model factory..
-    print('==> Building model..')
-    if args.model == 'res18' or args.model == 'resnet18':
-        model = ResNet18()
-    elif args.model == 'res50' or args.model == 'resnet50':
-        model = ResNet50()
-    elif args.model == "convmixer":
-        # from paper, accuracy >96%. you can tune the depth and dim to scale accuracy and speed.
-        model = ConvMixer(256, 16, kernel_size=args.convkernel, patch_size=1, n_classes=10)
-    elif args.model == "mlpmixer":
-        model = MLPMixer(image_size=32, channels=3, patch_size=args.patch, dim=512, depth=6, num_classes=args.num_classes)
-    elif args.model == "vit_small":
-        model = Small_ViT(
-            image_size=args.img_size, patch_size=args.patch,
-            num_classes=args.num_classes, dim=int(args.dimhead),
-            depth=4, heads=6, mlp_dim=256,
-            dropout=0.1, emb_dropout=0.1
-        )
-    elif args.model == "simplevit":
-        model = SimpleViT(
-            image_size=args.img_size, patch_size=args.patch,
-            num_classes=args.num_classes, dim=int(args.dimhead),
-            depth=6, heads=8, mlp_dim=512
-        )
-    elif args.model == "vit":
-        # ViT for cifar10
-        model = ViT(
-            image_size=args.img_size, patch_size=args.patch,
-            num_classes=args.num_classes, dim=int(args.dimhead),
-            depth=6, heads=8, mlp_dim=512,
-            dropout=0.1, emb_dropout=0.1
-        )
-    elif args.model == "vit_timm":
-        model = timm.create_model("vit_base_patch16_384", pretrained=True)
-        model.head = nn.Linear(model.head.in_features, 10)
-    elif args.model == "swin":
-        from models.swin import swin_t
-        model = swin_t(window_size=args.patch, num_classes=10, downscaling_factors=(2, 2, 2, 1))
-    if torch.cuda.is_available():
-        model.cuda()
+    #  ============ Prepare optimizer and scheduler  ============
+    optimizer = torch.optim.SGD(model.parameters(),
+                                lr=args.learning_rate,
+                                momentum=0.9,
+                                weight_decay=args.weight_decay)
 
-    if args.resume:
-        # Load checkpoint.
-        print('==> Resuming from checkpoint..')
-        assert os.path.isdir('checkpoint'), 'Error: no checkpoint directory found!'
-        checkpoint = torch.load('./checkpoint/{}-ckpt.t7'.format(args.model))
-        model.load_state_dict(checkpoint['model'])
-        best_acc = checkpoint['acc']
-        start_epoch = checkpoint['epoch']
+    if args.decay_type == "cosine":
+        scheduler = WarmupCosineSchedule(optimizer, warmup_steps=args.warmup_steps, t_total=args.num_steps)
+    else:
+        scheduler = WarmupLinearSchedule(optimizer, warmup_steps=args.warmup_steps, t_total=args.num_steps)
 
-    # ====================  Training utilities ====================
-    criterion = nn.CrossEntropyLoss()
+    if args.fp16:
+        model, optimizer = amp.initialize(models=model,
+                                          optimizers=optimizer,
+                                          opt_level=args.fp16_opt_level)
+        amp._amp_state.loss_scalers[0]._loss_scale = 2**20
 
-    optimizer = torch.optim.SGD(model.parameters(), momentum=0.9, lr=args.lr, weight_decay=args.weight_decay)
-    
-    if args.scheduler in ['ms', 'multi_step']:
-        lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[int(args.max_epochs*0.3), int(args.max_epochs*0.6)], gamma=0.1)
-    elif args.scheduler in ['cos', 'cosine']:
-        lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, args.max_epochs)
+    # Distributed training
+    if args.local_rank != -1:
+        model = DDP(model, message_size=250000000, gradient_predivide_factor=get_world_size())
 
-    wandb.watch(model, criterion, log='all', log_freq=100)
-    for epoch in range(args.max_epochs):
-        train_loss, train_acc = train_one_epoch(model, criterion, optimizer, train_loader, args)
-        lr_scheduler.step()
-        wandb.log({'train/train_loss': train_loss, 'train/train_acc': train_acc, 'train/lr': optimizer.param_groups[0]["lr"]}, step=epoch)
+    #  ============ Train  ============
+    logger.info("***** Running training *****")
+    logger.info(f"  Total optimization steps = {args.num_steps}, Total number of epochs = {args.num_epochs}", )
+    logger.info("  Instantaneous batch size per GPU = %d", args.train_batch_size)
+    logger.info("  Total train batch size (w. parallel, distributed & accumulation) = %d",
+                args.train_batch_size * args.gradient_accumulation_steps * (
+                    torch.distributed.get_world_size() if args.local_rank != -1 else 1))
+    logger.info("  Gradient Accumulation steps = %d", args.gradient_accumulation_steps)
 
-        if epoch == 0 or epoch % args.log_freq == 0 or epoch+1==args.max_epochs:
-            val_loss, val_acc = evaluate(model, criterion, test_loader)
+    model.zero_grad()
+    set_seed(args)  # Added here for reproducibility (even between python 2 and 3)
+    losses = AverageMeter()
+    global_step, best_acc = 0, 0
+    for epoch in range(args.num_epochs):
+        model.train()
+        epoch_iterator = tqdm(train_loader,
+                              desc="Training (X / X Steps) (loss=X.X)",
+                              bar_format="{l_bar}{r_bar}",
+                              dynamic_ncols=True,
+                              disable=args.local_rank not in [-1, 0])
+        for step, batch in enumerate(epoch_iterator):
+            batch = tuple(t.to(args.device) for t in batch)
+            x, y = batch
+            loss = model(x, y)
 
-            all_feats, preds, labels = get_feat_pred(model, train_loader)
-            labels = labels.squeeze()
-            train_nc = analysis_feat(labels, all_feats, num_classes=args.num_classes, W=model.fc.weight.data)
+            if args.gradient_accumulation_steps > 1:
+                loss = loss / args.gradient_accumulation_steps
+            if args.fp16:
+                with amp.scale_loss(loss, optimizer) as scaled_loss:
+                    scaled_loss.backward()
+            else:
+                loss.backward()
 
-            log_dt = {'val/val_loss': val_loss,
-                      'val/val_acc': val_acc,
+            if (step + 1) % args.gradient_accumulation_steps == 0:
+                losses.update(loss.item()*args.gradient_accumulation_steps)
+                if args.fp16:
+                    torch.nn.utils.clip_grad_norm_(amp.master_params(optimizer), args.max_grad_norm)
+                else:
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
+                scheduler.step()
+                optimizer.step()
+                optimizer.zero_grad()
+                global_step += 1
 
-                      'train_nc/nc1': train_nc['nc1'],
-                      'train_nc/nc2h': train_nc['nc2h'],
-                      'train_nc/nc2w': train_nc['nc2w'],
-                      'train_nc/nc2': train_nc['nc2'],
-                      'train_nc/nc3': train_nc['nc3'],
-                      'train_nc/h_norm': train_nc['h_norm'],
-                      'train_nc/w_norm': train_nc['w_norm'],
-                      }
-            wandb.log(log_dt, step=epoch)
+                epoch_iterator.set_description(
+                    "Training (%d / %d Steps) (loss=%2.5f)" % (global_step, args.num_steps, losses.val)
+                )
+                if args.local_rank in [-1, 0]:
+                    writer.add_scalar("train/loss", scalar_value=losses.val, global_step=global_step)
+                    writer.add_scalar("train/lr", scalar_value=scheduler.get_lr()[0], global_step=global_step)
+                if global_step % args.eval_every == 0 and args.local_rank in [-1, 0]:
+                    accuracy = valid(args, model, writer, test_loader, global_step)
+                    if best_acc < accuracy:
+                        save_model(args, model)
+                        best_acc = accuracy
+                    model.train()
 
-            weight_kqv = {id: model.transformer.layers[id][0].fn.to_qkv.weight for id in range(len(model.transformer.layers))}
-            weight_att_out = {id: model.transformer.layers[id][0].fn.to_out[0].weight for id in range(len(model.transformer.layers))}
-            weight_ffn = {id: model.transformer.layers[id][1].fn.net[0].weight for id in range(len(model.transformer.layers))}
+                if global_step % t_total == 0:
+                    break
+        losses.reset()
+        if global_step % t_total == 0:
+            break
 
-            _, rk_weight_kqv = get_rank(weight_kqv)
-            _, rk_weight_kqv = get_rank(weight_ffn)
-
-            feat_by_layer = get_all_feat(model, train_loader, include_input=False, img_rs=False)
-            _, rk_feat = get_rank(feat_by_layer)
-
-            wandb.log({f'feat_rank/{id}': rk for id, rk in rk_feat.items()}, step=epoch)
-            wandb.log({f'weight_kqv_rank/{id}': rk for id, rk in weight_kqv.items()}, step=epoch)
-            wandb.log({f'weight_ffn_rank/{id}': rk for id, rk in weight_ffn.items()}, step=epoch)
-
-        # ===== save model
-        if args.save_ckpt and val_acc > best_acc:
-            state = {"model": model.state_dict(),
-                     "optimizer": optimizer.state_dict(),  # "scaler": scaler.state_dict()
-                     }
-            if not os.path.isdir('checkpoint'):
-                os.mkdir('checkpoint')
-            torch.save(state, './checkpoint/' + args.model + '-{}-ckpt.t7'.format(args.patch))
-            best_acc = val_acc
-
-        log('Epoch:{}, lr:{:.6f}, train loss:{:.4f}, train acc:{:.4f}; val loss:{:.4f}, val acc:{:.4f}'.format(
-            epoch, optimizer.param_groups[0]["lr"], train_loss, train_acc, val_loss, val_acc
-        ))
+    if args.local_rank in [-1, 0]:
+        writer.close()
+    logger.info("Best Accuracy: \t%f" % best_acc)
+    logger.info("End Training!")
 
 
-def set_seed(SEED=666):
-    random.seed(SEED)
-    np.random.seed(SEED)
-    torch.manual_seed(SEED)
-    torch.cuda.manual_seed(SEED)
-    torch.cuda.manual_seed_all(SEED)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
+
+def valid(args, model, writer, test_loader, global_step):
+    # Validation!
+    eval_losses = AverageMeter()
+
+    logger.info("***** Running Validation *****")
+    logger.info("  Num steps = %d", len(test_loader))
+    logger.info("  Batch size = %d", args.eval_batch_size)
+
+    model.eval()
+    all_preds, all_label = [], []
+    epoch_iterator = tqdm(test_loader,
+                          desc="Validating... (loss=X.X)",
+                          bar_format="{l_bar}{r_bar}",
+                          dynamic_ncols=True,
+                          disable=args.local_rank not in [-1, 0])
+    loss_fct = torch.nn.CrossEntropyLoss()
+    for step, batch in enumerate(epoch_iterator):
+        batch = tuple(t.to(args.device) for t in batch)
+        x, y = batch
+        with torch.no_grad():
+            logits = model(x)[0]
+
+            eval_loss = loss_fct(logits, y)
+            eval_losses.update(eval_loss.item())
+
+            preds = torch.argmax(logits, dim=-1)
+
+        if len(all_preds) == 0:
+            all_preds.append(preds.detach().cpu().numpy())
+            all_label.append(y.detach().cpu().numpy())
+        else:
+            all_preds[0] = np.append(
+                all_preds[0], preds.detach().cpu().numpy(), axis=0
+            )
+            all_label[0] = np.append(
+                all_label[0], y.detach().cpu().numpy(), axis=0
+            )
+        epoch_iterator.set_description("Validating... (loss=%2.5f)" % eval_losses.val)
+
+    all_preds, all_label = all_preds[0], all_label[0]
+    accuracy = simple_accuracy(all_preds, all_label)
+
+    logger.info("\n")
+    logger.info("Validation Results")
+    logger.info("Global Steps: %d" % global_step)
+    logger.info("Valid Loss: %2.5f" % eval_losses.avg)
+    logger.info("Valid Accuracy: %2.5f" % accuracy)
+
+    writer.add_scalar("test/accuracy", scalar_value=accuracy, global_step=global_step)
+    return accuracy
 
 
 if __name__ == "__main__":
-    # parsers
-    parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
-    parser.add_argument("--seed", type=int, default=2021, help="random seed")
-    parser.add_argument('--dataset', type=str, default='cifar10')
-    parser.add_argument('--model', default='vit')
-    parser.add_argument('--num_classes', default=10, type=int)
-    parser.add_argument('--log_freq', default=5, type=int)
-    parser.add_argument('--save_ckpt', default=False, action='store_true', help='save best model')
+    parser = argparse.ArgumentParser()
+    # Required parameters
+    parser.add_argument("--name", default='exp', help="Name of this run. Used for monitoring.")
+    parser.add_argument("--dataset", choices=["cifar10", "cifar100", "imagenet", "im100"], default="cifar10",
+                        help="Which downstream task.")
+    parser.add_argument("--model_type",
+                        choices=["ViT-B_16", "ViT-B_32", "ViT-L_16", "ViT-L_32", "ViT-H_14", "R50-ViT-B_16"],
+                        default="ViT-B_16", help="Which variant to use.")
+    parser.add_argument("--pretrained_dir", type=str, default="checkpoint/ViT-B_16.npz",
+                        help="Where to search for pretrained ViT models.")
+    parser.add_argument("--output_dir", default="output", type=str,
+                        help="The output directory where checkpoints will be written.")
 
-    parser.add_argument('--lr', default=0.01, type=float, help='learning rate')  # resnets.. 1e-3, Vit..1e-4
-    parser.add_argument('--weight_decay', default=0.001, type=float, help='weight decay')
-    parser.add_argument('--resume', '-r', default=False, action='store_true', help='resume from checkpoint')
-    parser.add_argument('--use_amp', default=False, action='store_true',
-                        help='disable mixed precision training. for older pytorch versions')
-    parser.add_argument('--batch_size', type=int, default=128)
-    parser.add_argument('--scheduler', type=str, default='ms')
-    parser.add_argument('--max_epochs', type=int, default='200')
+    parser.add_argument("--img_size", default=224, type=int, help="Resolution size")
+    parser.add_argument("--batch_size", default=512, type=int, help="Total batch size for training.")
+    parser.add_argument("--num_workers", default=2, type=int)
+    parser.add_argument("--eval_every", default=100, type=int,
+                        help="Run prediction on validation set every so many steps."
+                             "Will always run one evaluation at the end of training.")
 
-    # args for ViT
-    parser.add_argument('--patch', default='4', type=int, help="patch for ViT")
-    parser.add_argument('--dimhead', default="512", type=int)
-    parser.add_argument('--convkernel', default='8', type=int, help="parameter for convmixer")
+    parser.add_argument("--learning_rate", default=3e-2, type=float, help="The initial learning rate for SGD.")
+    parser.add_argument("--weight_decay", default=0, type=float, help="Weight decay if we apply some.")
+    parser.add_argument("--num_epochs", default=100, type=int, help="Total number of training epochs to perform.")
+    parser.add_argument("--decay_type", choices=["cosine", "linear"], default="cosine",
+                        help="How to decay the learning rate.")
+    parser.add_argument("--warmup_steps", default=500, type=int,
+                        help="Step of training to perform learning rate warmup for.")
+    parser.add_argument("--max_grad_norm", default=1.0, type=float, help="Max gradient norm.")
 
-    parser.add_argument('--exp_name', type=str, default='baseline')
+    parser.add_argument("--local_rank", type=int, default=-1, help="local_rank for distributed training on gpus")
+    parser.add_argument('--seed', type=int, default=42, help="random seed for initialization")
+    parser.add_argument('--gradient_accumulation_steps', type=int, default=1,
+                        help="Number of updates steps to accumulate before performing a backward/update pass.")
+    parser.add_argument('--fp16', action='store_true', help="Whether to use 16-bit float precision instead of 32-bit")
+    parser.add_argument('--fp16_opt_level', type=str, default='O2',
+                        help="For fp16: Apex AMP optimization level selected in ['O0', 'O1', 'O2', and 'O3']."
+                             "See details at https://nvidia.github.io/apex/amp.html")
+    parser.add_argument('--loss_scale', type=float, default=0,
+                        help="Loss scaling to improve fp16 numeric stability. Only used when fp16 set to True.\n"
+                             "0 (default value): dynamic loss scaling.\n"
+                             "Positive power of 2: static loss scaling value.\n")
     args = parser.parse_args()
-
-    if args.dataset == 'cifar10':
-        args.img_size = 32
-        args.num_classes = 10
-    elif args.dataset == 'cifar100':
-        args.img_size = 32
-        args.num_classes = 100
-
-    args.output_dir = os.path.join('./result/{}_{}/'.format(args.dataset, args.model), args.exp_name)
-    if not os.path.exists(args.output_dir):
-        os.makedirs(args.output_dir)
-    set_log_path(args.output_dir)
-    log('save log to path {}'.format(args.output_dir))
-    log(print_args(args))
-
-    set_seed(SEED=args.seed)
     main(args)
-

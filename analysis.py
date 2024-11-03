@@ -1,11 +1,9 @@
 import os
 import torch
-import pickle
 import numpy as np
 import argparse
 from dataset import get_dataloader
-from model import RegressionResNet, MLP
-from sklearn.decomposition import PCA
+from models.model import RegressionResNet, MLP
 from matplotlib import pyplot as plt
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 

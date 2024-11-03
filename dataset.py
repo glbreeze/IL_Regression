@@ -31,6 +31,7 @@ def get_dataloader(args):
         train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=2, pin_memory=True, persistent_workers=True)
         val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=2, pin_memory=True, persistent_workers=True)
         print_memory_usage("Post-Dataset Loading GPU Memory Usage")
+
     elif args.dataset == 'mnist':
         transform = transforms.Compose([
             transforms.ToTensor(),
@@ -42,6 +43,33 @@ def get_dataloader(args):
         valset = datasets.MNIST(root='../dataset', train=False, download=True, transform=transform)
         val_loader = DataLoader(valset, batch_size=args.batch_size, shuffle=False, num_workers=4, pin_memory=True,
                                 persistent_workers=True)
+
+    # ============ preparing data ... ============
+    elif args.dataset == 'im100':
+        test_transform = transforms.Compose([
+            transforms.Resize(256),
+            transforms.CenterCrop(224),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        ])
+        train_transform = transforms.Compose([
+            transforms.RandomResizedCrop(224, scale=(0.08, 1.0)),
+            transforms.RandomHorizontalFlip(),
+            transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.1),
+            transforms.RandomGrayscale(p=0.1),
+            # transforms.AutoAugment(transforms.AutoAugmentPolicy.IMAGENET),
+            # transforms.RandomErasing(p=0.25, scale=(0.02, 0.2)),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        ])
+        trainset = datasets.ImageFolder(os.path.join('../dataset/imagenet-100', 'train'), train_transform)
+        testset = datasets.ImageFolder(os.path.join('../dataset/imagenet-100', 'val'), test_transform)
+
+        train_loader = torch.utils.data.DataLoader(trainset, sampler=None, batch_size=args.batch_size, shuffle=True,
+                                                   num_workers=args.num_workers, pin_memory=True, drop_last=True)
+
+        test_loader = torch.utils.data.DataLoader(testset, batch_size=args.batch_size, shuffle=False,
+                                                  num_workers=args.num_workers, persistent_workers=True, pin_memory=True)
 
     # cifar10/cifar100: 32x32, stl10: 96x96, fmnist: 28x28, TinyImageNet 64x64
     elif args.dataset == 'cifar10':

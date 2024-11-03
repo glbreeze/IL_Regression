@@ -54,3 +54,21 @@ def get_rank(m_by_layer):
         vr_by_layer[layer_id] = s_ratio
         rk_by_layer[layer_id] = effective_rank
     return vr_by_layer, rk_by_layer
+
+
+class AverageMeter(object):
+    """Computes and stores the average and current value"""
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.val = 0
+        self.avg = 0
+        self.sum = 0
+        self.count = 0
+
+    def update(self, val, n=1):
+        self.val = val
+        self.sum += val * n
+        self.count += n
+        self.avg = self.sum / self.count

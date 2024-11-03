@@ -1,11 +1,10 @@
 
 import argparse
-import os, pickle, torch, io
+import os, torch
 from matplotlib import pyplot as plt
-from train_utils import Graph_Vars
 import numpy as np
 from dataset import get_dataloader
-from model import RegressionResNet, MLP
+from model.model import RegressionResNet, MLP
 
 
 
