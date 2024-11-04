@@ -10,8 +10,6 @@ from __future__ import print_function
 import gc
 import random
 import argparse
-import numpy as np
-import torch.backends.cudnn as cudnn
 
 import wandb
 import timm
@@ -26,7 +24,7 @@ from dataset import get_dataloader
 from trainer import train_one_epoch, evaluate
 
 from utils.utils import *
-from train_utils import get_feat_pred, analysis_feat, get_all_feat
+from utils.train_utils import get_feat_pred, analysis_feat
 
 
 def main(args):

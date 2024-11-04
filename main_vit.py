@@ -14,14 +14,14 @@ import torch
 import torch.distributed as dist
 
 from tqdm import tqdm
-from torch.utils.tensorboard import SummaryWriter
 import torch.cuda.amp as amp
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 from models.modeling import VisionTransformer, CONFIGS
 from utils.sheduler import WarmupLinearSchedule, WarmupCosineSchedule
 from utils.disc_utils import get_world_size
-from utils.utils import AverageMeter
+from utils.utils import AverageMeter, get_rank
+from utils.train_utils import get_feat_pred, analysis_feat
 from dataset import get_dataloader
 
 logger = logging.getLogger(__name__)
@@ -188,31 +188,60 @@ def train(args, model):
                 epoch_iterator.set_description(
                     "Training (%d / %d Steps) (loss=%2.5f)" % (global_step, args.num_steps, losses.val)
                 )
-                if args.local_rank in [-1, 0] and global_step%5 == 0:
+                if args.local_rank in [-1, 0] and global_step % args.log_every == 0:
                     wandb.log({"train/loss": losses.val,
                                "train/lr": scheduler.get_lr()[0]
                                }, step=global_step)
-                if global_step % args.eval_every == 0 and args.local_rank in [-1, 0]:
-                    accuracy = valid(args, model, test_loader)
-                    wandb.log({"val/acc": accuracy}, step=global_step)
-                    if best_acc < accuracy:
-                        save_model(args, model)
-                        best_acc = accuracy
-                    model.train()
+                    losses.reset()
 
-        losses.reset()
+                    weight_q = {id: model.transformer.encoder.layer[id].attn.query.weight.data.cpu().numpy() for id in
+                                range(len(model.transformer.layers))}
+                    _, rk_weight_q = get_rank(weight_q)
+                    wandb.log({f'weight_q_rank/{id}': rk for id, rk in rk_weight_q.items()}, step=global_step)
+                    del weight_q
+
+                    weight_k = {id: model.transformer.encoder.layer[id].attn.key.weight.data.cpu().numpy() for id in
+                                range(len(model.transformer.layers))}
+                    _, rk_weight_k = get_rank(weight_k)
+                    wandb.log({f'weight_k_rank/{id}': rk for id, rk in rk_weight_k.items()}, step=global_step)
+                    del weight_k
+
+                    weight_v = {id: model.transformer.encoder.layer[id].attn.value.weight.data.cpu().numpy() for id in
+                                range(len(model.transformer.layers))}
+                    _, rk_weight_v = get_rank(weight_v)
+                    wandb.log({f'weight_v_rank/{id}': rk for id, rk in rk_weight_v.items()}, step=global_step)
+                    del weight_v
+
+                    weight_ffn = {id: model.transformer.encoder.layer[id].ffn.fc1.weight.data.cpu().numpy() for id in
+                                  range(len(model.transformer.encoder.layer))}
+                    _, rk_weight_ffn = get_rank(weight_ffn)
+                    wandb.log({f'weight_ffn_rank/{id}': rk for id, rk in rk_weight_ffn.items()}, step=epoch)
+                    del weight_ffn
+
+                if args.local_rank in [-1, 0] and global_step % args.eval_every == 0:
+                    # all_feats, preds, labels = get_feat_pred(model, train_loader)
+                    # labels = labels.squeeze()
+                    # train_nc = analysis_feat(labels, all_feats, num_classes=args.num_classes, W=model.fc.weight.data)
+
+                    test_acc = valid(args, model, test_loader)
+                    wandb.log({"val/acc": test_acc}, step=global_step)
+                    if best_acc < test_acc:
+                        save_model(args, model)
+                        best_acc = test_acc
+                    model.train()
 
     logger.info("Best Accuracy: \t%f" % best_acc)
     logger.info("End Training!")
 
 
 def train_cls(args, model, train_loader, test_loader):
-    model.zero_grad()
-    model.head.train()
-    set_seed(args)  # Added here for reproducibility (even between python 2 and 3)
+    set_seed(args)
+    for param in model.transformer.parameters():
+        param.requires_grad = False
     cls_optimizer = torch.optim.SGD(model.head.parameters(), lr=args.cls_lr, momentum=0.9, weight_decay=args.weight_decay)
 
     for epoch in range(args.cls_epochs):
+        model.zero_grad()
         model.transformer.eval()
         model.head.train()
         losses = AverageMeter('train_cls_loss')
@@ -226,16 +255,19 @@ def train_cls(args, model, train_loader, test_loader):
 
             loss.backward()
             if (step + 1) % args.gradient_accumulation_steps == 0:
-                torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
+                torch.nn.utils.clip_grad_norm_(model.head.parameters(), args.max_grad_norm)
                 cls_optimizer.step()
                 cls_optimizer.zero_grad()
 
                 prog = (epoch * len(train_loader) + step) / (args.cls_epochs * len(train_loader))
-                cls_optimizer.param_groups[0]['lr'] = args.cls_lr * 0.2 ** (prog // 0.333)
+                cls_optimizer.param_groups[0]['lr'] = args.cls_lr * 0.2 ** (prog // 0.5)
         print(f'Train Classifier EP{epoch}/{args.cls_epochs} Train loss:{losses.avg:.3f}, LR:{cls_optimizer.param_groups[0]["lr"]:.5f}')
 
         test_acc = valid(args, model, test_loader)
         print(f'Train Classifier EP{epoch}/{args.cls_epochs} Test Acc:{test_acc:.3f}')
+
+    for param in model.transformer.parameters():
+        param.requires_grad = True
 
 
 def valid(args, model, test_loader):
@@ -303,9 +335,8 @@ if __name__ == "__main__":
     parser.add_argument("--img_size", default=224, type=int, help="Resolution size")
     parser.add_argument("--batch_size", default=512, type=int, help="Total batch size for training.")
     parser.add_argument("--num_workers", default=2, type=int)
-    parser.add_argument("--eval_every", default=100, type=int,
-                        help="Run prediction on validation set every so many steps."
-                             "Will always run one evaluation at the end of training.")
+    parser.add_argument("--eval_every", default=100, type=int, help="Run prediction on validation set every so many steps.")
+    parser.add_argument("--log_every", default=10, type=int, help="Log train loss every so many steps.")
 
     parser.add_argument("--lr", default=3e-2, type=float, help="The initial learning rate for SGD.")
     parser.add_argument("--weight_decay", default=0, type=float, help="Weight decay if we apply some.")
